@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isFreshSignup } from "@/lib/auth/fresh-signup";
 
 function fail(message: string): never {
   redirect(`/signup?error=${encodeURIComponent(message)}`);
@@ -25,6 +26,14 @@ export async function signUp(formData: FormData) {
 
   if (error) fail(error.message);
   if (!data.user) fail("Signup failed. Please try again.");
+
+  // Supabase never errors for an email that already has an account (to
+  // avoid leaking which emails are registered) -- it just returns a user
+  // object that isn't actually a new signup. Proceeding here would attach a
+  // stranger's real account as the owner of a new business.
+  if (!isFreshSignup(data.user)) {
+    fail("This email is already registered. Please log in instead.");
+  }
 
   // The auth user exists immediately even if email confirmation is pending,
   // so the business can be created now rather than waiting on confirmation.

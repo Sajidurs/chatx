@@ -2,15 +2,26 @@ import Link from "next/link";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { isBusinessRestricted } from "@/lib/billing/access";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ planUpdated?: string }>;
+}) {
   const context = await getCurrentBusinessContext();
   if (!context) return null; // layout already redirects; satisfies TypeScript
+  const { planUpdated } = await searchParams;
 
   const { business } = context;
   const restricted = isBusinessRestricted(business);
 
   return (
     <div className="flex flex-col gap-4">
+      {planUpdated && (
+        <div className="rounded-md border border-green-300 bg-green-50 px-4 py-3 text-green-800">
+          Your plan change is being processed. It may take a few seconds to reflect below.
+        </div>
+      )}
+
       {restricted && (
         <div className="rounded-md border border-red-300 bg-red-50 px-4 py-3 text-red-800">
           Your access is currently restricted due to a payment issue. Please{" "}

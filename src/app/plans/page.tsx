@@ -2,13 +2,9 @@ import { redirect } from "next/navigation";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { stripe } from "@/lib/stripe/client";
 import { PLAN_PRICE_IDS, type Plan } from "@/lib/stripe/plans";
+import { formatCurrency } from "@/lib/format";
 
 const PLAN_ORDER: Plan[] = ["free", "starter", "pro"];
-
-function formatAmount(amountCents: number | null, currency: string) {
-  if (amountCents === null) return "Free";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amountCents / 100);
-}
 
 export default async function PlansPage() {
   const context = await getCurrentBusinessContext();
@@ -29,7 +25,7 @@ export default async function PlansPage() {
             <div key={plan} className="flex flex-col gap-3 rounded-lg border p-6">
               <h2 className="text-lg font-semibold capitalize">{plan}</h2>
               <p className="text-2xl font-bold">
-                {formatAmount(price.unit_amount, price.currency)}
+                {price.unit_amount === null ? "Free" : formatCurrency(price.unit_amount, price.currency)}
                 {price.unit_amount ? <span className="text-sm font-normal">/mo</span> : null}
               </p>
               <form action="/api/checkout" method="post">

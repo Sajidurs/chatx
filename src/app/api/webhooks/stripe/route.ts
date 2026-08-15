@@ -4,9 +4,11 @@ import { stripe } from "@/lib/stripe/client";
 import { planForPriceId } from "@/lib/stripe/plans";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendInvoiceUpcomingReminder } from "@/lib/email/resend";
+import { formatCurrency } from "@/lib/format";
 
 const HANDLED_EVENTS = new Set([
   "checkout.session.completed",
+  "customer.subscription.updated",
   "invoice.upcoming",
   "invoice.paid",
   "invoice.payment_failed",
@@ -31,33 +33,43 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
 
-  // Idempotency: Stripe can deliver the same event more than once. Checked
-  // before processing (so a repeat delivery is a no-op) but only recorded as
-  // processed AFTER the switch below completes without throwing -- recording
-  // it up front would mean a delivery that fails partway (e.g. the DB update
-  // succeeds but the reminder email throws) gets permanently marked done,
-  // and Stripe's retry of that same event would be silently swallowed as
-  // "already processed" instead of actually finishing the job.
-  const { data: existing } = await admin
-    .from("processed_stripe_events")
-    .select("event_id")
-    .eq("event_id", event.id)
-    .maybeSingle();
-  if (existing) {
-    return NextResponse.json({ received: true, alreadyProcessed: true });
+  // Idempotency: Stripe can deliver the same event more than once. The
+  // insert is the atomic claim -- if two deliveries race, only one wins and
+  // the other returns immediately. If processing then throws, the claim is
+  // released (row deleted) so a genuine retry can actually finish the job,
+  // rather than being silently swallowed as "already processed" forever.
+  const { error: claimError } = await admin.from("processed_stripe_events").insert({ event_id: event.id });
+  if (claimError) {
+    if (claimError.code === "23505") {
+      return NextResponse.json({ received: true, alreadyProcessed: true });
+    }
+    console.error("Failed to claim Stripe event for processing", claimError);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 
+  try {
+    await handleEvent(event, admin);
+  } catch (err) {
+    await admin.from("processed_stripe_events").delete().eq("event_id", event.id);
+    console.error(`Failed to process Stripe event ${event.id} (${event.type})`, err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+
+  return NextResponse.json({ received: true });
+}
+
+async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createAdminClient>) {
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       const businessId = session.metadata?.business_id;
       const subscriptionId = session.subscription as string | null;
-      if (!businessId || !subscriptionId) break;
+      if (!businessId || !subscriptionId) return;
 
       const subscription = await stripe.subscriptions.retrieve(subscriptionId);
       const priceId = subscription.items.data[0]?.price.id;
       const plan = priceId ? planForPriceId(priceId) : undefined;
-      if (!plan) break;
+      if (!plan) return;
 
       await admin
         .from("businesses")
@@ -69,7 +81,39 @@ export async function POST(request: Request) {
           past_due_at: null,
         })
         .eq("id", businessId);
-      break;
+      return;
+    }
+
+    case "customer.subscription.updated": {
+      // Fires for plan changes made via /api/checkout's in-place subscription
+      // update (see that route for why we update rather than create a
+      // second subscription), and for any other Stripe-side subscription
+      // change. We only act on it when it resolves to one of our known
+      // plans and the business already owns this subscription.
+      const subscription = event.data.object as Stripe.Subscription;
+      const businessId = subscription.metadata?.business_id;
+      if (!businessId) return;
+
+      const priceId = subscription.items.data[0]?.price.id;
+      const plan = priceId ? planForPriceId(priceId) : undefined;
+      if (!plan) return;
+
+      const { data: business } = await admin
+        .from("businesses")
+        .select("stripe_subscription_id")
+        .eq("id", businessId)
+        .single();
+      if (!business) return;
+      // Allow adopting the subscription id if the business doesn't have one
+      // yet (e.g. this update races ahead of checkout.session.completed),
+      // but never overwrite with an unrelated subscription's changes.
+      if (business.stripe_subscription_id && business.stripe_subscription_id !== subscription.id) return;
+
+      await admin
+        .from("businesses")
+        .update({ plan, stripe_subscription_id: subscription.id, stripe_customer_id: subscription.customer as string })
+        .eq("id", businessId);
+      return;
     }
 
     case "invoice.upcoming": {
@@ -81,7 +125,7 @@ export async function POST(request: Request) {
         .select("id, name")
         .eq("stripe_customer_id", customerId)
         .single();
-      if (!business) break;
+      if (!business) return;
 
       const { data: owner } = await admin
         .from("business_users")
@@ -90,12 +134,9 @@ export async function POST(request: Request) {
         .eq("role", "owner")
         .eq("status", "accepted")
         .single();
-      if (!owner) break;
+      if (!owner) return;
 
-      const amountDue = new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: invoice.currency,
-      }).format(invoice.amount_due / 100);
+      const amountDue = formatCurrency(invoice.amount_due, invoice.currency);
       const dueDate = invoice.next_payment_attempt
         ? new Date(invoice.next_payment_attempt * 1000).toLocaleDateString()
         : "soon";
@@ -106,7 +147,7 @@ export async function POST(request: Request) {
         amountDue,
         dueDate,
       });
-      break;
+      return;
     }
 
     case "invoice.paid": {
@@ -118,21 +159,15 @@ export async function POST(request: Request) {
         .select("id")
         .eq("stripe_customer_id", customerId)
         .single();
-      if (!business) break;
+      if (!business) return;
 
-      await admin
-        .from("businesses")
-        .update({ status: "active", past_due_at: null })
-        .eq("id", business.id);
+      await admin.from("businesses").update({ status: "active", past_due_at: null }).eq("id", business.id);
 
       const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
       await admin
         .from("usage_logs")
-        .upsert(
-          { business_id: business.id, month, message_count: 0 },
-          { onConflict: "business_id,month" }
-        );
-      break;
+        .upsert({ business_id: business.id, month, message_count: 0 }, { onConflict: "business_id,month" });
+      return;
     }
 
     case "invoice.payment_failed": {
@@ -144,13 +179,13 @@ export async function POST(request: Request) {
         .select("id, past_due_at")
         .eq("stripe_customer_id", customerId)
         .single();
-      if (!business) break;
+      if (!business) return;
 
       await admin
         .from("businesses")
         .update({ status: "past_due", past_due_at: business.past_due_at ?? new Date().toISOString() })
         .eq("id", business.id);
-      break;
+      return;
     }
 
     case "customer.subscription.deleted": {
@@ -158,18 +193,22 @@ export async function POST(request: Request) {
       const businessId = subscription.metadata?.business_id;
       const customerId = subscription.customer as string;
 
-      const query = businessId
-        ? admin.from("businesses").update({ status: "cancelled" }).eq("id", businessId)
-        : admin.from("businesses").update({ status: "cancelled" }).eq("stripe_customer_id", customerId);
-      await query;
-      break;
+      const { data: business } = await admin
+        .from("businesses")
+        .select("id, stripe_subscription_id")
+        .eq(businessId ? "id" : "stripe_customer_id", businessId || customerId)
+        .single();
+      if (!business) return;
+
+      // Only cancel if this is the subscription the business currently has
+      // on file -- a customer can end up with a stale/superseded
+      // subscription (e.g. from before plan-switching updated in place
+      // instead of creating a new one); its cancellation shouldn't lock out
+      // a business whose actual current subscription is unaffected.
+      if (business.stripe_subscription_id && business.stripe_subscription_id !== subscription.id) return;
+
+      await admin.from("businesses").update({ status: "cancelled" }).eq("id", business.id);
+      return;
     }
   }
-
-  // Record success now that processing actually completed. A unique-violation
-  // here just means a concurrent duplicate delivery recorded it first, which
-  // is fine -- the effect has already been applied either way.
-  await admin.from("processed_stripe_events").insert({ event_id: event.id });
-
-  return NextResponse.json({ received: true });
 }

@@ -3,11 +3,205 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-15 — Code review: Phase 0 + Phase 1 (done)
+
+Founder asked for a full review of everything built so far for cleanliness
+and scalability before starting Phase 2. Ran a structured review (correctness
++ simplification/scalability) over both migrations, all RLS policies, and
+every file under `src/`. Six real findings, all fixed and re-verified against
+the live Supabase/Stripe test accounts (not just re-read):
+
+- **Signup/invite could attach a stranger's real account as business
+  owner.** Supabase's `auth.signUp()` never errors for an email that already
+  has an account (anti-enumeration): for an already-*confirmed* email it
+  returns an obfuscated placeholder id (caught incidentally by the
+  `business_users.auth_user_id` foreign key, which rejects the fake id), but
+  for an *unconfirmed* existing account it returns that person's **real** id
+  with no error -- verified empirically against this project. Confirmed via
+  a second test that resubmitting signUp does NOT change that account's
+  password (not an account-takeover path), but without a check, our code
+  would silently create a business and attach a real stranger's `auth_user_id`
+  as its owner. Added `src/lib/auth/fresh-signup.ts` (`isFreshSignup`): a
+  signup only proceeds if Supabase returned actual new identities AND
+  `created_at` is within the last minute -- both signals are needed, since
+  age alone doesn't apply to the empty-identities case and identities alone
+  doesn't apply to the unconfirmed-real-user case. Applied in both
+  `signup/actions.ts` and `invite/[token]/actions.ts`.
+- **`getCurrentBusinessContext` crashed for any user with more than one
+  accepted business membership.** Nothing in the schema prevents that (e.g.
+  invited to a second business), but `.single()` throws on >1 rows, which
+  would have looped a legitimate user back to `/login` forever. Changed to
+  `.order("created_at").limit(1)` -- picks the earliest membership rather
+  than crashing. (A real business-switcher is out of scope for now; this
+  just stops it from being a crash.)
+- **Switching plans created a second, independently-billed subscription**
+  instead of replacing the first -- `/plans` only disabled the *current*
+  plan's button, so picking a different one always called Checkout again.
+  `/api/checkout` now updates the existing subscription's price in place
+  (`stripe.subscriptions.update`) when one already exists, instead of
+  creating a new Checkout session; the resulting plan change flows through
+  a new `customer.subscription.updated` webhook case, same as every other
+  billing-state change. `customer.subscription.deleted` was also hardened to
+  only cancel a business when the deleted subscription actually matches
+  `stripe_subscription_id` on file -- otherwise a stale/superseded
+  subscription being canceled elsewhere could wrongly lock out a business
+  whose real current subscription is unaffected.
+- **A race in the webhook idempotency check** could let two near-simultaneous
+  deliveries of the same event both pass the "already processed?" check and
+  both run the handler (e.g. two reminder emails for one invoice). Rewritten
+  as claim-then-process-then-release-on-failure: the insert into
+  `processed_stripe_events` is now the atomic claim itself (only one
+  concurrent request can win it), and if processing throws, the claim is
+  deleted so a genuine retry can still finish the job -- combining the
+  earlier ordering fix (Phase 1 log below) with actual concurrency safety.
+- **`business_users.invite_token` was readable by any team member**, not just
+  the owner who created the invite -- the RLS policy is row-scoped (any
+  member of the business), and RLS doesn't gate individual columns. Since the
+  anon key is public (shipped to the browser), any authenticated team member
+  could query `invite_token` directly via `@supabase/supabase-js`, bypassing
+  the fact that the app's own queries never select it. Locked down at the
+  grant level (same pattern as the Phase 1 `businesses` column lockdown):
+  `REVOKE SELECT ... FROM authenticated` + `GRANT SELECT (id, business_id,
+  email, role, status, created_at, auth_user_id)` -- `auth_user_id` is
+  included even though it's never displayed, because Postgres column grants
+  also gate columns referenced in `WHERE` clauses, and
+  `current-business.ts` filters on it.
+- **Currency formatting was duplicated** between `/plans` and the webhook's
+  `invoice.upcoming` case. Extracted to `src/lib/format.ts`
+  (`formatCurrency`), used by both -- one place to update before Phase 6
+  analytics inevitably needs to format amounts too.
+
+**Re-verified after all fixes** (new migration pushed to the real Supabase
+project; full rebuild; all real, not re-derived from memory):
+
+- `scripts/e2e-phase1.mjs` (7/7) and `scripts/verify-billing-webhooks.mjs`
+  (14/14) both still pass unchanged -- the column lockdown and idempotency
+  rewrite didn't regress anything already verified in Phase 1.
+- `scripts/verify-plan-switch.mjs` (new, 9/9): switching plans via the real
+  `/plans` UI leaves exactly one subscription on the Stripe customer with the
+  new price (not two); the resulting `customer.subscription.updated` event
+  correctly updates `business.plan`; a stale/unrelated subscription being
+  deleted does NOT cancel the business; deleting the business's actual
+  current subscription does.
+- `isFreshSignup`'s boundary conditions (5/5, direct logic test): new
+  signup allowed; empty-identities existing user blocked; non-empty-identities
+  existing user from 2 minutes / 3 days ago both blocked; missing identities
+  field defensively blocked.
+- Attempted a full live re-test of the guard through the real `/signup` form
+  against a real unconfirmed victim account
+  (`scripts/verify-fresh-signup-guard.mjs`): repeatedly hit Supabase's
+  email-sending rate limit (exhausted by everything else tested today)
+  before reaching the code path being tested, so the exact "already
+  registered" error message wasn't re-confirmed live. What DID come through
+  clearly both times: no business was created, the victim's account gained
+  zero `business_users` rows, and their original password still worked
+  afterward -- i.e. the dangerous outcome doesn't happen, even though the
+  specific UI error text is unconfirmed live. Combined with the direct logic
+  test and the earlier empirical probes of Supabase's exact response shapes,
+  this is good enough to consider fixed, but worth a real manual signup
+  attempt with a duplicate email once the rate limit has cooled off.
+- One unrelated observation surfaced while checking cleanup: an auth account
+  for the founder's own email exists with no business attached and no sign-in
+  recorded. Not created by any test script (none use that email) -- flagged
+  to the founder rather than deleted, since it might be real (manual
+  poking-around signup) rather than test debris.
+
+## 2026-08-15 — Decision change: embeddings provider is Voyage AI, not OpenAI
+
+Founder changed the Phase 0 embeddings decision: Voyage AI instead of OpenAI,
+specifically **voyage-4-lite** rather than the flagship voyage-4. Reasoning:
+the documents being embedded here (FAQs, service descriptions, booking
+rules, business policies) are short and semantically straightforward --
+not the dense technical/legal content where voyage-4's extra quality would
+earn its higher per-token cost. voyage-4-lite is meaningfully cheaper, which
+matters for a product with a free tier.
+
+Dimension changed accordingly: Voyage's voyage-4/voyage-4-lite default to
+**1024** dimensions (not OpenAI's 1536), with Matryoshka truncation available
+down to 256/512 if storage or query latency ever become a concern. Chose to
+keep the full 1024 rather than truncating -- at MVP scale, storage isn't a
+bottleneck, and truncating trades away retrieval quality preemptively for a
+saving that isn't needed yet. Revisit if `knowledge_chunks` grows large
+enough for HNSW index size/query latency to matter.
+
+Applied via `supabase/migrations/20260815120000_voyage_embedding_dimension.sql`
+(drops and recreates the HNSW index around the column type change, rather
+than relying on `ALTER COLUMN TYPE` to rebuild it implicitly) -- safe since
+`knowledge_chunks` is still empty, Phase 2 hasn't started writing to it yet.
+Verified functionally against the real Supabase project: inserting a
+1536-dimension vector now fails ("expected 1024 dimensions, not 1536"),
+inserting a 1024-dimension vector succeeds.
+
+`.env.example`/`.env.local`: `OPENAI_API_KEY` replaced with `VOYAGE_API_KEY`.
+Founder is signing up for a Voyage AI account and adding the key directly to
+`.env.local`.
+
+**Cost note, not yet a live spend**: Voyage's signup grant is a **one-time
+free token allotment, not a recurring monthly allowance** -- unlike some
+providers' ongoing free tiers, this is a bank that depletes and doesn't
+refill. Once Phase 2 is embedding real documents at any volume, budget for
+this as a real, metered cost from the start rather than assuming it's free
+indefinitely.
+
+## 2026-08-15 — Founder manual testing session (paused, continues next session)
+
+Founder tried the real app in a browser before starting Phase 2 (login,
+signup, dashboard). Found and worked through several environment issues that
+weren't code bugs:
+
+- An existing Supabase auth account (founder's own email) had been created
+  directly in the Supabase dashboard rather than through the app's signup
+  form, so it had zero `business_users` rows -- login worked, but the
+  dashboard correctly bounced it back to `/login` since it had no business to
+  show. Not a bug: this is the intended behavior for an account with no
+  membership. Fixed by attaching that existing account as owner of a new
+  business, **Wallxer** (`business_id` created via a one-off admin script),
+  so the founder could get into the dashboard immediately without waiting on
+  anything.
+- Hit Supabase's shared default email-sending rate limit again when trying
+  to submit the real signup form (exhausted by all of today's automated
+  testing). Decided to fix this properly rather than just wait it out:
+  configured Resend as Supabase Auth's custom SMTP (Authentication → Emails →
+  SMTP Settings: host `smtp.resend.com`, port 587, username `resend`,
+  password = the Resend API key), which routes auth emails through the
+  founder's own Resend account instead of Supabase's shared low-quota
+  service.
+- That surfaced the sandbox-sender restriction directly: with an unverified
+  sending domain, Resend only delivers to the account's own registered
+  email, so signing up with a different test address failed
+  ("Error sending confirmation email", 500 on `/auth/v1/signup`). Founder
+  had already verified a real domain in Resend, **falahchat.com**
+  (interesting: this may be the actual intended product/brand name, distinct
+  from the `chatx` working repo name -- not confirmed, just noting it here
+  in case it's relevant later e.g. for the Phase 5 embed widget's default
+  branding or Phase 7's landing page). Updated `RESEND_FROM_ADDRESS` in
+  `.env.local` to `Falah Chat <noreply@falahchat.com>` to use it for our own
+  transactional emails (the `invoice.upcoming` reminder).
+
+**Still open, continue here next session:** after verifying `falahchat.com`
+in Resend, signup was *still* failing with the same "Error sending
+confirmation email" error. The Supabase dashboard's SMTP "Sender email"
+field likely still has the old sandbox address (`onboarding@resend.dev`)
+rather than an address on the newly-verified domain -- that field needs to
+be updated to something like `noreply@falahchat.com` and saved. Founder ran
+out of time to check/fix this today. Next session: confirm that field, retry
+signup with a fresh email, and if it still fails, pull the exact SMTP error
+from Supabase's Auth logs (Logs → filter to Auth, or the entry logged around
+14:34 today) rather than guessing further.
+
 ## Known gaps
 
 Living list of things intentionally left unresolved, so they don't get lost.
 Remove an item once it's actually fixed (and note where/when in the dated log
 below) rather than leaving it here stale.
+
+- **Signup still fails with "Error sending confirmation email."** Custom SMTP
+  (Resend) is configured in Supabase, and `falahchat.com` is verified in
+  Resend, but the dashboard's SMTP "Sender email" field almost certainly
+  still points at the old `onboarding@resend.dev` sandbox address instead of
+  something on the verified domain. Next session: check/fix that field first
+  (see the 2026-08-15 manual testing entry above for full context), then
+  retest signup.
 
 - **No local/staging environment.** No Docker on this dev machine, so
   `supabase start` can't run locally — every schema change so far has gone

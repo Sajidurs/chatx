@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { acceptInvite, findPendingInvite } from "@/lib/auth/accept-invite";
+import { isFreshSignup } from "@/lib/auth/fresh-signup";
 
 function fail(token: string, message: string): never {
   redirect(`/invite/${token}?error=${encodeURIComponent(message)}`);
@@ -31,6 +32,12 @@ export async function acceptInviteViaSignup(formData: FormData) {
     fail(token, error.message);
   }
   if (!data.user) fail(token, "Signup failed. Please try again.");
+
+  // See src/lib/auth/fresh-signup.ts -- Supabase silently returns an
+  // existing (possibly unconfirmed) user's real id here instead of erroring.
+  if (!isFreshSignup(data.user)) {
+    fail(token, "You already have an account with this email. Log in, then revisit this link.");
+  }
 
   const { accepted } = await acceptInvite(token, data.user.id);
   if (!accepted) fail(token, "This invite is invalid or has already been used.");
