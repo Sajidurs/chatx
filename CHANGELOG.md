@@ -15,10 +15,6 @@ below) rather than leaving it here stale.
   real customer data exists. Revisit before launch (Phase 7): either get Docker
   installed for a proper local/staging split, or stand up a second hosted
   Supabase project as staging.
-- **`RESEND_API_KEY` is not set yet.** `invoice.upcoming` reminder emails can't
-  send until the founder provides one (free Resend account is enough). The
-  webhook handler correctly fails (500, so Stripe retries) rather than
-  silently pretending to succeed -- see Phase 1 below.
 - **The one thing that can't be verified in this environment**: a real
   Checkout completion delivering a real webhook from Stripe's own servers.
   Stripe can't reach `localhost`, and there's no Docker/Stripe CLI here to
@@ -237,18 +233,22 @@ server, real browser where relevant):**
   once, and a second failure event does not reset that clock (grace period
   isn't restarted by repeated retries); `customer.subscription.deleted` sets
   `status=cancelled`; an invalid/tampered signature is rejected with 400.
-  `invoice.upcoming` correctly fails (500, so Stripe will retry) because
-  `RESEND_API_KEY` isn't set yet -- everything up to the email send (looking
-  up the business and owner by Stripe customer id) works.
+  `invoice.upcoming` initially failed (500, Stripe would have retried)
+  because `RESEND_API_KEY` wasn't set yet -- everything up to the email send
+  (looking up the business and owner by Stripe customer id) worked.
 - Both scripts confirmed clean afterward: zero leftover test businesses, auth
   users, Stripe customers, or `processed_stripe_events` rows.
+- **`RESEND_API_KEY` added; `invoice.upcoming` verified end-to-end.**
+  `scripts/verify-reminder-email.mjs` creates a test business whose owner
+  email is the founder's real inbox (Resend's sandbox sender --
+  `onboarding@resend.dev`, used since no custom domain is verified yet -- can
+  only deliver to the account's own registered address), fires a real signed
+  `invoice.upcoming` event at the webhook endpoint, and confirms a 200
+  response. Founder confirmed the email actually arrived. Cleaned up
+  afterward (business, auth user, Stripe customer, dedup row all removed).
 
 **Still incomplete / next step:**
 
-- `RESEND_API_KEY` is still blank. Once the founder provides one (a free
-  Resend account is enough), `invoice.upcoming` can be verified end-to-end,
-  per Phase 1's definition of done ("reminder email actually sends, test
-  inbox confirms").
 - The one thing that genuinely can't be verified from this environment: a
   real Checkout completion delivering a real webhook from Stripe's own
   servers (Stripe can't reach `localhost`, and there's no Docker/Stripe CLI
@@ -256,5 +256,5 @@ server, real browser where relevant):**
   the Stripe CLI if installed later): complete one real test-mode Checkout
   with card `4242 4242 4242 4242`, confirm the business record updates and a
   real webhook arrives.
-- Once both of the above are done, Phase 1 can be marked complete against
+- Once that's done, Phase 1 will be fully complete against
   system_design.md's definition of done.
