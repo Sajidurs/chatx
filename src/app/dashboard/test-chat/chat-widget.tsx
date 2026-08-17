@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useRef, useEffect } from "react";
 
 type Message = { role: "visitor" | "assistant" | "system"; content: string };
@@ -8,17 +9,36 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function ChatWidget({ businessId }: { businessId: string }) {
+function TypingDots() {
+  return (
+    <div className="mr-auto flex w-fit items-center gap-1 rounded-lg bg-gray-100 px-3 py-2.5">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500 [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500 [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" />
+    </div>
+  );
+}
+
+export function ChatWidget({
+  businessId,
+  assistantName,
+  assistantPhotoUrl,
+}: {
+  businessId: string;
+  assistantName?: string | null;
+  assistantPhotoUrl?: string | null;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [typing, setTyping] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const visitorIdRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, typing]);
 
   async function send() {
     const text = input.trim();
@@ -55,16 +75,37 @@ export function ChatWidget({ businessId }: { businessId: string }) {
       }
 
       for (const reply of data.replies as { content: string; delayMs: number }[]) {
+        setTyping(true);
         await sleep(reply.delayMs);
+        setTyping(false);
         setMessages((prev) => [...prev, { role: "assistant", content: reply.content }]);
       }
     } finally {
+      setTyping(false);
       setSending(false);
     }
   }
 
   return (
-    <div className="flex h-[500px] flex-col rounded-lg border">
+    <div className="flex h-[500px] flex-col rounded-lg border bg-white text-gray-900">
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        {assistantPhotoUrl ? (
+          <Image
+            src={assistantPhotoUrl}
+            alt={assistantName || "Assistant"}
+            width={28}
+            height={28}
+            className="rounded-full object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500">
+            {(assistantName || "A")[0].toUpperCase()}
+          </div>
+        )}
+        <span className="text-sm font-medium">{assistantName || "Assistant"}</span>
+      </div>
+
       <div className="flex-1 space-y-2 overflow-y-auto p-4">
         {messages.map((m, i) => (
           <div
@@ -74,12 +115,13 @@ export function ChatWidget({ businessId }: { businessId: string }) {
                 ? "ml-auto max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
                 : m.role === "system"
                   ? "mx-auto max-w-[90%] rounded-md bg-yellow-50 px-3 py-2 text-center text-xs text-yellow-800"
-                  : "mr-auto max-w-[80%] rounded-lg bg-gray-100 px-3 py-2 text-sm"
+                  : "mr-auto max-w-[80%] rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-900"
             }
           >
             {m.content}
           </div>
         ))}
+        {typing && <TypingDots />}
         <div ref={bottomRef} />
       </div>
       <form
@@ -93,7 +135,7 @@ export function ChatWidget({ businessId }: { businessId: string }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type a message..."
-          className="flex-1 rounded-md border px-3 py-2 text-sm"
+          className="flex-1 rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
           disabled={sending}
         />
         <button

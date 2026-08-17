@@ -15,7 +15,11 @@ export default async function TestChatPage() {
           monthly message quota -- it isn&apos;t a separate sandbox.
         </p>
       </div>
-      <ChatWidget businessId={context.business.id} />
+      <ChatWidget
+        businessId={context.business.id}
+        assistantName={context.business.assistant_name}
+        assistantPhotoUrl={context.business.assistant_photo_url}
+      />
     </div>
   );
 }

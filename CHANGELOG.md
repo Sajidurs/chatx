@@ -3,6 +3,32 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Founder testing: fixed real bugs on the test-chat page
+
+Founder tried `/dashboard/test-chat` after Phase 3 shipped and found three
+real problems, none of them caught by the automated verification since it
+only inspects the API response, not the rendered page.
+
+- **Assistant reply text was unreadable** -- light gray text on a light gray
+  bubble. Root cause was systemic, not local to the chat widget:
+  `globals.css` flips `body`'s text color to light gray under
+  `prefers-color-scheme: dark`, but no component in this app was built with
+  dark-mode-aware colors (no `dark:` variants anywhere). On a system in dark
+  mode, that leaves every colored panel -- the chat bubble, but also every
+  banner on `/dashboard`, `/plans`, `/dashboard/onboarding`, etc. -- with a
+  light background inheriting light foreground text. Fixed by removing the
+  dark-mode media query entirely rather than patching the chat widget alone;
+  forcing light mode is correct until an actual dark theme gets built with
+  matching component styles.
+- **Assistant name and photo weren't shown at all** -- the widget never
+  displayed persona info in the first place. Added a header bar with the
+  photo (or an initial-letter placeholder) and name, sourced from the same
+  `current-business` context every other dashboard page already uses.
+- **No visible typing indicator** -- the pacing delay was real (verified in
+  Phase 3's automated run) but invisible; the UI just went silent for the
+  delay's duration before the message appeared. Added an animated three-dot
+  indicator shown for the delay's duration before each reply chunk renders.
+
 ## 2026-08-17 — Phase 3: chat engine (done)
 
 **Area:** Claude integration, RAG retrieval injection, human-like reply

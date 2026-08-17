@@ -12,12 +12,12 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* No dark-mode variant yet: every component (banners, chat bubbles, form
+   fields) is built against light backgrounds with dark text and none of them
+   have dark: variants. Letting the OS's prefers-color-scheme flip just the
+   root colors without also updating every component created bad-contrast
+   text (e.g. light gray text on a light gray chat bubble) instead of an
+   actual dark theme. Force light until a real dark theme is built. */
 
 body {
   background: var(--background);
