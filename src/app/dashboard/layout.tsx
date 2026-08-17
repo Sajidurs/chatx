@@ -14,6 +14,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Link href="/dashboard">Dashboard</Link>
           <Link href="/dashboard/knowledge">Training</Link>
           <Link href="/dashboard/onboarding">Assistant setup</Link>
+          <Link href="/dashboard/test-chat">Test chat</Link>
           <Link href="/dashboard/team">Team</Link>
           <Link href="/plans">Plan</Link>
           <form action="/auth/signout" method="post">

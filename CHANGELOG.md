@@ -3,6 +3,89 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Phase 3: chat engine (done)
+
+**Area:** Claude integration, RAG retrieval injection, human-like reply
+pacing, message quota enforcement, chat session/message storage.
+
+**What was built:**
+
+- **`src/lib/ai/claude.ts`**: one function, `generateReply({systemPrompt,
+  history})`, calling `claude-sonnet-5` (system_design.md: "Sonnet for
+  quality, Haiku as a cost option on high-volume plans" -- Haiku tiering
+  isn't wired up yet, nothing calls for it this phase). Thinking disabled and
+  `effort: "low"` -- this is short conversational Q&A, not a reasoning task,
+  and latency matters for a live chat widget. Handles `stop_reason:
+  "refusal"` (Sonnet 5's safety classifiers) with a graceful fallback message
+  instead of crashing.
+- **`src/lib/chat/respond.ts`**: the actual orchestration, in order --
+  resolve/create the `chat_sessions` row, record the visitor's message
+  regardless of what happens next, check `isBusinessRestricted` (billing
+  takes priority over quota), atomically check-and-consume the message quota
+  via `try_consume_message_quota` (new Postgres function, same
+  UPDATE-WHERE-RETURNING atomicity pattern as the RLS/search helper
+  functions -- prevents two concurrent messages from both slipping past the
+  limit), retrieve matching chunks via `match_knowledge_chunks`, inject them
+  into a fresh system prompt each turn, call Claude with the full session
+  history, split the reply, store each chunk as its own `chat_messages` row.
+- **`src/lib/chat/pacing.ts`**: `splitIntoMessages` groups sentences into
+  chat-bubble-sized chunks (paragraph breaks always split); `computeTypingDelayMs`
+  scales delay to chunk length (`300 + 30ms/char`, clamped 500-3500ms) --
+  "visibly proportional, not fixed" per the Phase 3 spec.
+- **`POST /api/chat`**: the public endpoint (no auth -- visitors are
+  anonymous, not Supabase-authenticated business users). Creates a
+  `visitor_id` if none is supplied, returns `{sessionId, visitorId, blocked,
+  blockedReason?, replies}`. This is what Phase 5's embed widget will call.
+- **`/dashboard/test-chat`**: a minimal authenticated chat UI (the first
+  genuinely client-interactive page in the app -- `useState`/`useEffect`,
+  not a server action) so the founder can try their own assistant before the
+  real widget exists in Phase 5. Explicitly *not* a separate sandbox --
+  it calls the same `/api/chat` endpoint and counts against the same
+  monthly quota a real visitor would.
+
+**Decisions made (not explicit in system_design.md):**
+
+- Every plan uses Sonnet for now (Haiku cost-tiering deferred -- see above).
+- Thinking disabled, `effort: "low"` for every chat turn -- short
+  conversational replies don't need deep reasoning, and low latency matters
+  more here than on, say, the onboarding questionnaire.
+- A business already blocked by billing (`isBusinessRestricted` -- cancelled,
+  or past_due beyond the grace period) can't use chat at all, checked
+  *before* the message quota. Not explicitly called out as Phase 3 scope, but
+  a natural extension of the Phase 1 billing gate -- reuses that same helper
+  rather than inventing a second concept.
+- The visitor's own message is always recorded, even when the turn gets
+  blocked (quota or billing) -- the transcript should reflect what was
+  actually sent, only the AI-generated half is what's withheld.
+
+**Verified end-to-end** (real dev server, real browser-equivalent HTTP calls,
+real Voyage API, real Claude API, real Supabase project) via
+`scripts/verify-phase3-chat.mjs`: **13/13 checks passed** -- a real
+conversation against real trained content (business hours, walk-in policy)
+produced replies that actually contained those facts and contained no AI
+disclaimer language; the same session correctly carried context across
+turns; asked about a second business's secret off-menu dish, the reply
+didn't leak it (cross-tenant isolation holds through the *full* chat
+pipeline, not just the raw retrieval function already proven in Phase 2);
+seeding a free-plan business's usage to 20 and sending a 21st message
+returned `blocked: true` with **zero** Claude calls and the quota count
+never incremented past 20 (verified by counting `chat_messages` rows before
+and after -- the visitor's message was still recorded, no assistant reply
+was); a cancelled business was blocked immediately with a billing-specific
+message and never even touched the quota table; every reply chunk's
+`delayMs` matched the pacing formula exactly, confirming it scales with
+length rather than being fixed. Cleaned up all test data afterward.
+
+**Still incomplete / next step:**
+
+- "Replies read as short and conversational... when reviewed manually" is
+  the one Phase 3 done-condition that's inherently a human judgment call, not
+  something a script can assert. The automated run's actual reply text is
+  quoted above for a first read; founder should also try `/dashboard/test-chat`
+  directly for a final gut check before considering this fully signed off.
+- Next up: Phase 4 (booking system) -- Google Calendar OAuth, availability/
+  booking/cancel/reschedule tools, gated to plans with `booking_enabled`.
+
 ## 2026-08-17 — Founder testing: fixed a real bug on the assistant setup page
 
 Founder tried Phase 2's `/dashboard/onboarding` page after it shipped and hit
