@@ -11,12 +11,15 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
+    "mammoth": "^1.12.1",
     "next": "15.5.23",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "resend": "^6.20.0",
     "server-only": "^0.0.1",
-    "stripe": "^22.5.0"
+    "stripe": "^22.5.0",
+    "unpdf": "^1.8.1",
+    "voyageai": "^0.4.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -27,6 +30,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.23",
+    "pdf-lib": "^1.17.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

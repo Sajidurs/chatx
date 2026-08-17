@@ -3,6 +3,105 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Phase 2: AI training / RAG (done)
+
+**Area:** File upload, text extraction, chunking, embeddings, onboarding
+questionnaire, persona setup.
+
+**What was built:**
+
+- **Upload pipeline** (`/dashboard/knowledge`): PDF, `.docx`, and plain
+  text/markdown files upload to a private Supabase Storage bucket
+  (`knowledge-sources`, no client-facing storage policies -- everything goes
+  through server actions using the service-role client, same pattern as
+  other sensitive writes in this project). A `knowledge_sources` row is
+  created with `status='processing'` immediately; extraction, chunking, and
+  embedding run afterward via Next.js 15's `after()` API so the upload
+  request returns instantly rather than blocking on the full pipeline.
+- **Text extraction** (`src/lib/knowledge/extract.ts`): plain text read
+  directly; `.docx` via `mammoth`; PDF via `unpdf`. Legacy binary `.doc` is
+  not supported -- `mammoth` only handles modern OOXML `.docx`, and in
+  practice almost all business documents today are `.docx`, PDF, or plain
+  text anyway.
+- **Chunking** (`src/lib/knowledge/chunk.ts`): a paragraph-aware sliding
+  window (~1000 chars, ~150 char overlap) that only hard-splits a paragraph
+  that alone exceeds the target size, keeping related sentences together
+  where possible.
+- **Embeddings** (`src/lib/ai/voyage.ts`): Voyage AI's official TypeScript
+  SDK (`voyageai`), `voyage-4-lite`, 1024 dimensions, batched (32 texts/call)
+  to stay under Voyage's per-request limits. Uses `inputType: "document"`
+  for stored chunks and `inputType: "query"` for search queries -- Voyage
+  recommends this distinction for retrieval alignment.
+- **Similarity search**: `match_knowledge_chunks(business_id, embedding,
+  count)`, a Postgres function (not `SECURITY DEFINER` -- relies on the
+  existing RLS policy on `knowledge_chunks` as an independent second scoping
+  layer for any caller other than the service role), centralizing the
+  tenant-scoped vector search the same way the RLS helper functions
+  centralize row-level scoping.
+- **Onboarding questionnaire → system prompt** (`/dashboard/onboarding`):
+  business type, services, tone, booking rules, FAQs generate a system
+  prompt via a deterministic template (`src/lib/onboarding/generate-system-
+  prompt.ts`) -- no LLM call. Kept it that way deliberately: Phase 3 owns
+  actual Claude integration, and blurring that in here would mean paying for
+  and depending on the chat model before Phase 3 exists. The raw
+  questionnaire answers aren't persisted separately (schema has no such
+  table, and system_design.md doesn't call for one) -- the generated prompt
+  *is* the saved artifact, editable afterward via a plain textarea + its own
+  save action, satisfying "editable afterward" from the Phase 2 spec.
+- **Persona setup**: assistant name/bio save through the same form as the
+  questionnaire; photo uploads to a public `assistant-photos` bucket (public
+  reads are correct here, unlike knowledge-sources -- Phase 5's embed widget
+  needs to show it to website visitors) and updates `assistant_photo_url`.
+- Next.js config: raised Server Actions' default 1MB body limit to 20MB
+  (`next.config.ts`) so document uploads don't get rejected.
+
+**Decisions made (not explicit in system_design.md):**
+
+- **PDF library swapped mid-build.** `pdf-parse@2.4.5` turned out to be a
+  full rewrite depending on `@napi-rs/canvas` (native binary bindings) --
+  real deployment-fragility risk on Vercel's serverless environment for what
+  should be a simple text-extraction task. Swapped to `unpdf`, built
+  specifically for serverless/edge PDF extraction with no native deps,
+  before writing any code against the wrong library.
+- **Background processing via `after()`, not a job queue.** Vercel-native,
+  zero new infrastructure, sufficient for the modest document sizes an SMB's
+  FAQs/policies actually are. Revisit with a real queue (Inngest, QStash,
+  Trigger.dev) if documents get large enough that `after()`'s execution
+  window becomes a real constraint -- not needed at MVP scale.
+- **Any accepted business member (owner or staff) can upload/delete
+  knowledge documents**, matching the existing `knowledge_sources` RLS
+  policies from Phase 0. Only the owner can edit persona/system
+  prompt/onboarding (mirrors the Phase 0 decision that owner-only covers
+  `businesses` row edits).
+
+**Verified end-to-end** (real dev server, real browser, real Voyage AI API,
+real Supabase project) via `scripts/verify-phase2-rag.mjs`: **10/10 checks
+passed** -- uploading a real PDF through the actual dashboard UI (not a
+simulated pipeline call) produces `ready`-status chunks with 1024-dim
+embeddings scoped to the right `business_id`; a similarity search for one
+business's content returns only that business's chunks, and explicitly does
+*not* return a second business's chunks for the identical query (proves
+tenant isolation in vector search, not just structured-row RLS); the
+onboarding questionnaire generates a system prompt that visibly reflects the
+submitted answers; that prompt is directly editable afterward and persists;
+persona photo upload produces a public URL. Cleaned up afterward -- zero
+leftover test businesses, auth users, or storage files.
+
+**Real operational finding, not a bug**: Voyage's account has no payment
+method on file, capping it at **3 requests/minute** (200M free tokens still
+apply regardless, per the Voyage decision entry below). Hit this rate limit
+mid-testing from firing embed calls too quickly; the verification script now
+paces Voyage calls ~25s apart to stay under it. This will matter for real
+usage too -- once Phase 2 (or any later phase) is embedding/searching at any
+real volume, a payment method needs to be on file in the Voyage dashboard or
+the app will get 429s under normal traffic, not just rapid test scripts.
+
+**Still incomplete / next step:**
+
+- Next up: Phase 3 (chat engine) -- Claude API integration using
+  `match_knowledge_chunks` for retrieval, human-like reply pacing, quota
+  enforcement, and chat session/message storage.
+
 ## 2026-08-17 — Closed out the two remaining Phase 1 gaps
 
 Continuing founder manual testing from 2026-08-15. Both open items from that
@@ -241,6 +340,10 @@ below) rather than leaving it here stale.
   real customer data exists. Revisit before launch (Phase 7): either get Docker
   installed for a proper local/staging split, or stand up a second hosted
   Supabase project as staging.
+- **Voyage AI has no payment method on file**, capping it at 3 requests/min
+  regardless of the free token balance. Fine for light testing, not fine
+  once Phase 2 (or Phase 3's chat retrieval) sees any real traffic — add a
+  payment method in the Voyage dashboard before that happens, or expect 429s.
 - **`stripe listen` must be running for local billing testing to actually
   update business records.** It's a manual foreground process
   (`.tools/stripe.exe listen --forward-to localhost:3000/api/webhooks/stripe`)

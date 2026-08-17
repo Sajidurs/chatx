@@ -12,6 +12,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <span className="font-semibold">{context.business.name}</span>
         <nav className="flex items-center gap-4 text-sm">
           <Link href="/dashboard">Dashboard</Link>
+          <Link href="/dashboard/knowledge">Training</Link>
+          <Link href="/dashboard/onboarding">Assistant setup</Link>
           <Link href="/dashboard/team">Team</Link>
           <Link href="/plans">Plan</Link>
           <form action="/auth/signout" method="post">
