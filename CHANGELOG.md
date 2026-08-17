@@ -3,6 +3,34 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Founder testing: fixed a real bug on the assistant setup page
+
+Founder tried Phase 2's `/dashboard/onboarding` page after it shipped and hit
+a genuine bug: uploaded a photo, saw a green "Saved." banner, but the photo
+never actually appeared and no file existed in storage at all.
+
+Root cause: the page has three independent forms (photo upload, persona +
+questionnaire, direct system-prompt edit), and all three redirected to the
+same generic `?saved=1`. The founder had successfully saved the questionnaire
+moments earlier; that leftover "Saved." banner made the *separate*, silently
+failed photo upload look like it had succeeded too. The photo itself failed
+because it exceeded the old 5MB limit, which real photos/screenshots
+routinely do.
+
+Fixed: each action now redirects with its own `saved` value (`photo`,
+`persona`, `prompt`) and the page shows a section-scoped confirmation instead
+of one shared banner. Raised the photo size limit to 8MB, and the file-size/
+type error messages now state the actual values involved rather than a
+generic message. Also renamed the save buttons themselves (e.g. "Save name,
+bio & generate prompt" vs. "Save prompt text") so it's clear at a glance
+which section a click will affect.
+
+**Process note:** this commit initially went out without a changelog entry —
+founder caught the omission. Logged here after the fact; the non-negotiable
+rule from CLAUDE.md (append an entry after every meaningful chunk of work,
+no exceptions for small fixes) stands regardless of how small a change feels
+in the moment.
+
 ## 2026-08-17 — Phase 2: AI training / RAG (done)
 
 **Area:** File upload, text extraction, chunking, embeddings, onboarding
