@@ -3,6 +3,46 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Closed out the two remaining Phase 1 gaps
+
+Continuing founder manual testing from 2026-08-15. Both open items from that
+session are now resolved.
+
+**Custom SMTP fixed.** The "Error sending confirmation email" error was a
+misconfigured Supabase SMTP Username: it was set to the founder's account
+name (`shajidur171`) instead of the literal, fixed string `resend` that
+Resend's SMTP relay requires as username regardless of whose account it is.
+Corrected in the Supabase dashboard; signup with a fresh email now works.
+
+**Local Stripe webhook delivery solved with the Stripe CLI.** Real Checkout
+completions were reaching Stripe fine, but nothing was listening on the
+webhook endpoint, so business records never updated after a real payment
+(the "one thing that can't be verified in this environment" gap from Phase
+1 -- turns out it needed solving sooner than expected, since manual testing
+surfaced it immediately). No package manager was available to install it
+(no choco/scoop), so downloaded the Windows binary directly from
+`stripe-cli`'s GitHub releases to `.tools/stripe.exe` (gitignored -- it's a
+downloaded tool, not project source). Running
+`stripe listen --forward-to localhost:3000/api/webhooks/stripe` forwards
+real test-mode events to the local server in real time; its session webhook
+signing secret replaced the self-generated placeholder in
+`STRIPE_WEBHOOK_SECRET`. This should stay running during any future local
+billing testing.
+
+**Two businesses manually synced to match Stripe's actual state**, since
+their real checkout completions happened before the above was set up and
+Stripe won't retry old, permanently-failed-to-deliver events on its own:
+"Man Feshiopn" (created during today's real signup+checkout test) updated to
+`plan=starter`, `status=active`, with its real `stripe_customer_id`/
+`stripe_subscription_id` attached -- applied by hand, mirroring exactly what
+`checkout.session.completed` would have done. "Wallxer" (the manually-
+attached test business from 2026-08-15) has an old completed session too
+(`cs_test_...HfvK...`, 2026-08-15) but was left as-is since it was only ever
+a throwaway login/dashboard test fixture, not a real signup -- flagging here
+in case its stale Stripe session causes confusion later.
+
+Both "Known gaps" items this closes have been removed from that list below.
+
 ## 2026-08-15 — Code review: Phase 0 + Phase 1 (done)
 
 Founder asked for a full review of everything built so far for cleanliness
@@ -195,28 +235,25 @@ Living list of things intentionally left unresolved, so they don't get lost.
 Remove an item once it's actually fixed (and note where/when in the dated log
 below) rather than leaving it here stale.
 
-- **Signup still fails with "Error sending confirmation email."** Custom SMTP
-  (Resend) is configured in Supabase, and `falahchat.com` is verified in
-  Resend, but the dashboard's SMTP "Sender email" field almost certainly
-  still points at the old `onboarding@resend.dev` sandbox address instead of
-  something on the verified domain. Next session: check/fix that field first
-  (see the 2026-08-15 manual testing entry above for full context), then
-  retest signup.
-
 - **No local/staging environment.** No Docker on this dev machine, so
   `supabase start` can't run locally — every schema change so far has gone
   straight to the one shared (founder-owned) Supabase project. Fine while no
   real customer data exists. Revisit before launch (Phase 7): either get Docker
   installed for a proper local/staging split, or stand up a second hosted
   Supabase project as staging.
-- **The one thing that can't be verified in this environment**: a real
-  Checkout completion delivering a real webhook from Stripe's own servers.
-  Stripe can't reach `localhost`, and there's no Docker/Stripe CLI here to
-  tunnel it. Everything the webhook handler does has been verified with real
-  Stripe test-mode objects and realistically-shaped signed events instead (see
-  Phase 1) -- but the founder should do one real manual Checkout (test card
-  `4242 4242 4242 4242`) once this is deployed somewhere with a public URL, or
-  locally via the Stripe CLI if installed, to see the full real flow once.
+- **`stripe listen` must be running for local billing testing to actually
+  update business records.** It's a manual foreground process
+  (`.tools/stripe.exe listen --forward-to localhost:3000/api/webhooks/stripe`)
+  -- if it's not running when a real Checkout completes locally, that event
+  is gone for good (Stripe doesn't retry a delivery attempt to an endpoint
+  that was never listening). Worth remembering to start it before any future
+  local Checkout testing, and something to make foolproof later (e.g. a
+  `predev` script reminder, or just always test against a deployed
+  environment with a real registered webhook endpoint instead).
+- "Wallxer" (test business from 2026-08-15) has a real completed Stripe
+  Checkout session from before webhook forwarding existed, never synced --
+  see the 2026-08-17 entry above. Low priority (throwaway test fixture), but
+  if it causes confusion later, that's why.
 
 ## 2026-08-15 — Phase 0: Foundation (done)
 

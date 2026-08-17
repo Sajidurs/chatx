@@ -37,6 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# locally downloaded dev tools (e.g. Stripe CLI), not committed
+/.tools
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
