@@ -3,6 +3,109 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-17 — Phase 4: booking system (done)
+
+**Area:** Google Calendar OAuth, the four booking tools, real-calendar
+integration with the Phase 3 chat engine.
+
+**What was built:**
+
+- **`src/lib/crypto/encryption.ts`**: AES-256-GCM encrypt/decrypt, used
+  specifically for `businesses.google_refresh_token` at rest, per
+  system_design.md.
+- **`src/lib/google/oauth.ts`**: auth URL generation + code-for-tokens
+  exchange (`googleapis`'s `OAuth2` client, `access_type: offline` +
+  `prompt: consent` so reconnecting after a disconnect still gets a fresh
+  refresh token).
+- **OAuth connect/callback flow** (`/dashboard/calendar` → connect action →
+  `/api/google/callback`): CSRF-protected with a per-flow nonce cookie set
+  before redirecting to Google and checked on return, *plus* a same-session
+  ownership re-check on callback (the nonce alone only proves "same browser
+  session that started this flow" -- not "still logged in as the same
+  user," if someone logged out and a different account logged in mid-flow).
+- **`src/lib/google/calendar.ts`**: `checkAvailability` (via `freebusy.query`),
+  `createCalendarEvent` (with `conferenceDataVersion: 1` for a real Google
+  Meet link, `sendUpdates: "all"` so the customer gets a real email invite),
+  `deleteCalendarEvent`, `patchCalendarEvent`.
+- **`src/lib/google/booking-tools.ts`**: the four tool definitions
+  (`check_availability`, `create_booking`, `cancel_booking`,
+  `reschedule_booking`) plus their executor. Every booking lookup is scoped
+  by `business_id`, not just `booking_id` -- a booking ID is just a UUID a
+  visitor could guess or reuse, and one business's chat must never be able
+  to touch another business's calendar.
+- **`src/lib/ai/claude.ts`**: extended `generateReply` with a manual agentic
+  tool-use loop (call Claude → execute any `tool_use` blocks → feed results
+  back → repeat until `end_turn` or a 5-iteration cap) -- a manual loop
+  rather than the SDK's beta Tool Runner, since four well-defined tools
+  don't need its extra machinery.
+- **`respond.ts`**: booking tools are only handed to Claude when *both*
+  `plan_limits.booking_enabled` is true for the business's plan *and* the
+  business has actually connected a calendar (`google_refresh_token` +
+  `google_calendar_id` both set) -- plan alone isn't enough if there's
+  nothing to book against.
+
+**Decisions made (not explicit in system_design.md):**
+
+- **OAuth scope widened from `calendar.events` to the full `calendar`
+  scope**, discovered during live testing: `freebusy.query` (used by
+  `check_availability`) returns 403 "insufficient authentication scopes"
+  under `calendar.events` alone -- free/busy lookups are gated separately
+  from event CRUD. Rather than chasing down a second narrow scope
+  (`calendar.freebusy`) and asking the founder to configure yet another
+  scope in Google Cloud Console, standardized on the one broader scope that
+  covers everything the four tools need.
+- **`cancel_booking`/`reschedule_booking` no longer require `booking_id`.**
+  Originally required, but live testing surfaced a real design gap: our
+  chat history is reconstructed from stored message *text* between separate
+  `/api/chat` requests, not raw tool-call data -- so a `booking_id` Claude
+  saw in one turn's tool result isn't visible in a later turn's history
+  unless it was actually spoken aloud in a reply (it wasn't). A real
+  customer in a live chat doesn't carry a booking ID around anyway ("cancel
+  that" is how people actually talk). Made `booking_id` optional on both
+  tools; when omitted, the executor resolves to the most recent
+  `confirmed`/`rescheduled` booking for the current chat session --
+  scoped by `business_id` *and* `session_id`, so it can only ever resolve to
+  a booking from this same conversation.
+- `google_calendar_id` is always stored as the literal string `"primary"` at
+  connect time (Google's alias for the authenticated user's primary
+  calendar), not a specific secondary calendar. Multi-calendar/staff-specific
+  calendars is explicitly a system_design.md "differentiator, not required
+  for MVP" -- not built now.
+
+**Verified end-to-end against a real Google Calendar** (real dev server,
+real conversations through the real `/api/chat` endpoint -- matching the
+spec's own wording, "after a test conversation" -- real Claude API, and
+independent verification via direct Google Calendar API calls, not just our
+own database) via `scripts/verify-phase4-booking.mjs`: **12/12 checks
+passed**. A real conversation asked about availability, booked a meeting,
+and the resulting event was confirmed as a real event on the connected
+calendar with a **real, working Google Meet link** (`meet.google.com/...`,
+independently fetched via `events.get`); a follow-up availability check in
+the same conversation correctly reflected the new booking (no
+double-booking); "move my booking" (with no ID given) correctly resolved to
+that same booking via the session-based fallback and the **real** calendar
+event's time actually changed (verified with a timezone-aware instant
+comparison -- Google returns event times in the calendar's local offset, not
+UTC, which tripped up the test script itself before being fixed); "cancel
+that" correctly cancelled it, and the **real** calendar event's status
+changed to `cancelled`. Cleaned up all test data (database rows *and* the
+real calendar event) afterward.
+
+**Two real bugs found and fixed during this verification, not just
+config**: the scope-widening decision above, and the `booking_id`
+resolution redesign above -- both surfaced only because this was tested
+against a real calendar through real conversation, not by reading the code.
+
+**Still incomplete / next step:**
+
+- Google's OAuth consent screen is still in "Testing" publishing status
+  (only the founder's own test-user email can connect a calendar). Fine for
+  now; real public launch will need Google's app verification process for
+  the Calendar scope -- a Phase 7 concern.
+- Next up: Phase 5 (embeddable widget) -- the actual public-facing chat
+  widget and embed snippet, since `/dashboard/test-chat` was always meant as
+  an internal stand-in until this existed.
+
 ## 2026-08-17 — Founder testing: fixed real bugs on the test-chat page
 
 Founder tried `/dashboard/test-chat` after Phase 3 shipped and found three
@@ -493,7 +596,14 @@ below) rather than leaving it here stale.
 - "Wallxer" (test business from 2026-08-15) has a real completed Stripe
   Checkout session from before webhook forwarding existed, never synced --
   see the 2026-08-17 entry above. Low priority (throwaway test fixture), but
-  if it causes confusion later, that's why.
+  if it causes confusion later, that's why. Also now on the Pro plan
+  (upgraded directly in the database to test Phase 4's booking tools,
+  bypassing real Checkout for that one test) and has a real Google Calendar
+  connected -- both intentional, not accidents.
+- **Google OAuth app is still in "Testing" publishing status** -- only the
+  founder's own test-user email can connect a calendar right now. Needs
+  Google's app verification process before any real business can connect
+  their own calendar. Not needed until Phase 7 (public launch).
 
 ## 2026-08-15 — Phase 0: Foundation (done)
 

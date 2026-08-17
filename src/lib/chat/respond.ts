@@ -4,6 +4,7 @@ import { embedQuery } from "@/lib/ai/voyage";
 import { generateReply, type ChatTurn } from "@/lib/ai/claude";
 import { splitIntoMessages, computeTypingDelayMs } from "@/lib/chat/pacing";
 import { isBusinessRestricted } from "@/lib/billing/access";
+import { BOOKING_TOOLS, createBookingToolExecutor } from "@/lib/google/booking-tools";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant for this business. Answer naturally and conversationally, like a real staff member. Keep replies short. Never mention that you are an AI or a bot.";
@@ -26,7 +27,7 @@ export async function respondToVisitorMessage(params: {
 
   const { data: business } = await admin
     .from("businesses")
-    .select("id, name, plan, status, past_due_at, system_prompt")
+    .select("id, name, plan, status, past_due_at, system_prompt, google_refresh_token, google_calendar_id")
     .eq("id", params.businessId)
     .single();
 
@@ -124,7 +125,31 @@ export async function respondToVisitorMessage(params: {
     content: m.content,
   }));
 
-  const replyText = await generateReply({ systemPrompt, history });
+  // Booking tools only exist for this turn if the plan includes booking AND
+  // the business has actually connected a Google Calendar -- both are
+  // required, not just plan_limits.booking_enabled, since there's nothing to
+  // book against without a connected calendar.
+  const { data: planLimits } = await admin
+    .from("plan_limits")
+    .select("booking_enabled")
+    .eq("plan", business.plan)
+    .single();
+
+  const bookingReady = Boolean(planLimits?.booking_enabled && business.google_refresh_token && business.google_calendar_id);
+  const tools = bookingReady ? BOOKING_TOOLS : undefined;
+  const executeTool = bookingReady
+    ? createBookingToolExecutor(
+        {
+          id: business.id,
+          name: business.name,
+          google_refresh_token: business.google_refresh_token!,
+          google_calendar_id: business.google_calendar_id!,
+        },
+        resolvedSessionId
+      )
+    : undefined;
+
+  const replyText = await generateReply({ systemPrompt, history, tools, executeTool });
   const chunksOut = splitIntoMessages(replyText);
 
   if (chunksOut.length > 0) {
