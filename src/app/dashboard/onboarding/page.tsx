@@ -25,9 +25,6 @@ export default async function OnboardingPage({
       </div>
 
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-      {saved && (
-        <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">Saved.</p>
-      )}
       {!isOwner && (
         <p className="rounded-md bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
           Only the business owner can edit assistant setup. You can view the current settings
@@ -35,8 +32,11 @@ export default async function OnboardingPage({
         </p>
       )}
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="font-medium">Photo</h2>
+        {saved === "photo" && (
+          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">Photo saved.</p>
+        )}
         <div className="flex items-center gap-4">
           {business.assistant_photo_url ? (
             <Image
@@ -56,18 +56,25 @@ export default async function OnboardingPage({
             <form action={uploadAssistantPhoto} className="flex items-center gap-2">
               <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" required />
               <button type="submit" className="rounded-md border px-3 py-1.5 text-sm">
-                Upload
+                Upload photo
               </button>
             </form>
           )}
         </div>
+        <p className="text-xs text-gray-500">PNG, JPEG, or WebP, up to 8MB. This section saves independently of the other two below.</p>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="font-medium">Onboarding questionnaire</h2>
+      <section className="flex flex-col gap-3 rounded-lg border p-4">
+        <h2 className="font-medium">Name, bio &amp; onboarding questionnaire</h2>
+        {saved === "persona" && (
+          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
+            Name, bio, and system prompt saved.
+          </p>
+        )}
         <p className="text-sm text-gray-500">
           Generates a starting system prompt below, which you can then edit directly.
-          Re-submitting this form replaces the current prompt.
+          Re-submitting this form replaces the current prompt (but not the photo above, which
+          has its own save button).
         </p>
         <form action={generateFromQuestionnaire} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm">
@@ -113,16 +120,22 @@ export default async function OnboardingPage({
               type="submit"
               className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
             >
-              Generate system prompt
+              Save name, bio &amp; generate prompt
             </button>
           )}
         </form>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="font-medium">System prompt</h2>
+      <section className="flex flex-col gap-3 rounded-lg border p-4">
+        <h2 className="font-medium">System prompt (direct edit)</h2>
+        {saved === "prompt" && (
+          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
+            System prompt saved.
+          </p>
+        )}
         <p className="text-sm text-gray-500">
-          What your assistant actually sees. Edit directly any time.
+          What your assistant actually sees. Edit the wording directly any time -- this section
+          only saves the text below, not the name/bio/questionnaire above.
         </p>
         <form action={saveSystemPrompt} className="flex flex-col gap-3">
           <textarea
@@ -137,7 +150,7 @@ export default async function OnboardingPage({
               type="submit"
               className="w-fit rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
             >
-              Save
+              Save prompt text
             </button>
           )}
         </form>

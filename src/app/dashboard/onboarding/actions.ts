@@ -11,6 +11,14 @@ function fail(message: string): never {
   redirect(`/dashboard/onboarding?error=${encodeURIComponent(message)}`);
 }
 
+// Each action redirects with its own `saved` value (not a shared generic
+// flag) so the page can say specifically what was saved -- three independent
+// forms sharing one vague "Saved." banner is exactly what caused confusion
+// about whether the photo had actually been saved when it hadn't.
+function saved(what: "persona" | "prompt" | "photo"): never {
+  redirect(`/dashboard/onboarding?saved=${what}`);
+}
+
 function field(formData: FormData, name: string): string {
   return String(formData.get(name) || "").trim();
 }
@@ -51,7 +59,7 @@ export async function generateFromQuestionnaire(formData: FormData) {
     .eq("id", context.business.id);
 
   if (error) fail("Could not save. Please try again.");
-  redirect("/dashboard/onboarding?saved=1");
+  saved("persona");
 }
 
 // Direct edit of the generated prompt -- the "editable afterward" path.
@@ -69,10 +77,10 @@ export async function saveSystemPrompt(formData: FormData) {
     .eq("id", context.business.id);
 
   if (error) fail("Could not save. Please try again.");
-  redirect("/dashboard/onboarding?saved=1");
+  saved("prompt");
 }
 
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // 8MB -- raised from 5MB, which real photos/screenshots routinely exceed
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export async function uploadAssistantPhoto(formData: FormData) {
@@ -82,8 +90,12 @@ export async function uploadAssistantPhoto(formData: FormData) {
 
   const file = formData.get("photo");
   if (!(file instanceof File) || file.size === 0) fail("Please choose an image to upload.");
-  if (file.size > MAX_PHOTO_BYTES) fail("Image is too large (max 5MB).");
-  if (!ALLOWED_IMAGE_TYPES.has(file.type)) fail("Please upload a PNG, JPEG, or WebP image.");
+  if (file.size > MAX_PHOTO_BYTES) {
+    fail(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB, max 8MB).`);
+  }
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    fail(`Unsupported image type (${file.type || "unknown"}). Please upload a PNG, JPEG, or WebP image.`);
+  }
 
   const admin = createAdminClient();
   const extension = file.name.split(".").pop()?.toLowerCase() || "png";
@@ -103,5 +115,5 @@ export async function uploadAssistantPhoto(formData: FormData) {
     .eq("id", context.business.id);
   if (error) fail("Could not save the photo. Please try again.");
 
-  redirect("/dashboard/onboarding?saved=1");
+  saved("photo");
 }
