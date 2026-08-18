@@ -24,7 +24,7 @@ export default async function LeadsPage() {
 
       {(!leads || leads.length === 0) && (
         <Card>
-          <p className="text-sm text-gray-500">No leads yet -- they'll show up here as soon as a visitor starts a chat.</p>
+          <p className="text-sm text-gray-500">No leads yet -- they&apos;ll show up here as soon as a visitor starts a chat.</p>
         </Card>
       )}
 
