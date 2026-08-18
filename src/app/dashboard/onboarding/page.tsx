@@ -1,13 +1,13 @@
 import Image from "next/image";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { generateFromQuestionnaire, saveSystemPrompt, uploadAssistantPhoto } from "./actions";
+import { PageHeader, Card } from "../ui";
+import { SavedBanner, ErrorBanner } from "../confirm-banners";
 
-export default async function OnboardingPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string; saved?: string }>;
-}) {
-  const { error, saved } = await searchParams;
+const inputClass =
+  "rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100";
+
+export default async function OnboardingPage() {
   const context = await getCurrentBusinessContext();
   if (!context) return null;
 
@@ -16,126 +16,89 @@ export default async function OnboardingPage({
 
   return (
     <div className="flex max-w-2xl flex-col gap-8">
-      <div>
-        <h1 className="text-xl font-semibold">Assistant setup</h1>
-        <p className="text-sm text-gray-600">
-          Your assistant&apos;s name, photo, and personality, plus the questionnaire that
-          generates its starting instructions.
-        </p>
-      </div>
+      <PageHeader
+        title="Assistant setup"
+        description="Your assistant's name, photo, and personality, plus the questionnaire that generates its starting instructions."
+      />
 
-      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <ErrorBanner />
       {!isOwner && (
-        <p className="rounded-md bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
-          Only the business owner can edit assistant setup. You can view the current settings
-          below.
-        </p>
+        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+          Only the business owner can edit assistant setup. You can view the current settings below.
+        </div>
       )}
 
-      <section className="flex flex-col gap-3 rounded-lg border p-4">
-        <h2 className="font-medium">Photo</h2>
-        {saved === "photo" && (
-          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">Photo saved.</p>
-        )}
+      <Card className="flex flex-col gap-3">
+        <h2 className="font-semibold">Photo</h2>
+        <SavedBanner value="photo">Photo saved.</SavedBanner>
         <div className="flex items-center gap-4">
           {business.assistant_photo_url ? (
-            <Image
-              src={business.assistant_photo_url}
-              alt="Assistant photo"
-              width={64}
-              height={64}
-              className="rounded-full object-cover"
-              unoptimized
-            />
+            <Image src={business.assistant_photo_url} alt="Assistant photo" width={64} height={64} className="rounded-full object-cover" unoptimized />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400">
-              No photo
-            </div>
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400">No photo</div>
           )}
           {isOwner && (
             <form action={uploadAssistantPhoto} className="flex items-center gap-2">
-              <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" required />
-              <button type="submit" className="rounded-md border px-3 py-1.5 text-sm">
+              <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" required className="text-sm" />
+              <button type="submit" className="rounded-xl border border-gray-200 px-3.5 py-2 text-sm hover:bg-gray-50">
                 Upload photo
               </button>
             </form>
           )}
         </div>
         <p className="text-xs text-gray-500">PNG, JPEG, or WebP, up to 8MB. This section saves independently of the other two below.</p>
-      </section>
+      </Card>
 
-      <section className="flex flex-col gap-3 rounded-lg border p-4">
-        <h2 className="font-medium">Name, bio &amp; onboarding questionnaire</h2>
-        {saved === "persona" && (
-          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
-            Name, bio, and system prompt saved.
-          </p>
-        )}
+      <Card className="flex flex-col gap-4">
+        <h2 className="font-semibold">Name, bio &amp; onboarding questionnaire</h2>
+        <SavedBanner value="persona">Name, bio, and system prompt saved.</SavedBanner>
         <p className="text-sm text-gray-500">
-          Generates a starting system prompt below, which you can then edit directly.
-          Re-submitting this form replaces the current prompt (but not the photo above, which
-          has its own save button).
+          Generates a starting system prompt below, which you can then edit directly. Re-submitting this form replaces the current prompt (but not
+          the photo above, which has its own save button).
         </p>
         <form action={generateFromQuestionnaire} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Assistant name
-            <input
-              name="assistantName"
-              defaultValue={business.assistant_name ?? ""}
-              disabled={!isOwner}
-              className="rounded-md border px-3 py-2"
-            />
+            <input name="assistantName" defaultValue={business.assistant_name ?? ""} disabled={!isOwner} className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Short bio
-            <input
-              name="assistantBio"
-              defaultValue={business.assistant_bio ?? ""}
-              disabled={!isOwner}
-              className="rounded-md border px-3 py-2"
-            />
+            <input name="assistantBio" defaultValue={business.assistant_bio ?? ""} disabled={!isOwner} className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Business type (e.g. hair salon, dental clinic, restaurant)
-            <input name="businessType" disabled={!isOwner} required className="rounded-md border px-3 py-2" />
+            <input name="businessType" disabled={!isOwner} required className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Services offered
-            <textarea name="services" disabled={!isOwner} required rows={3} className="rounded-md border px-3 py-2" />
+            <textarea name="services" disabled={!isOwner} required rows={3} className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Tone (e.g. friendly and casual, professional and concise)
-            <input name="tone" disabled={!isOwner} className="rounded-md border px-3 py-2" />
+            <input name="tone" disabled={!isOwner} className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Booking rules (hours, buffer times, what needs a deposit, etc.)
-            <textarea name="bookingRules" disabled={!isOwner} rows={3} className="rounded-md border px-3 py-2" />
+            <textarea name="bookingRules" disabled={!isOwner} rows={3} className={inputClass} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Frequently asked questions and answers
-            <textarea name="faqs" disabled={!isOwner} rows={4} className="rounded-md border px-3 py-2" />
+            <textarea name="faqs" disabled={!isOwner} rows={4} className={inputClass} />
           </label>
           {isOwner && (
-            <button
-              type="submit"
-              className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
-            >
+            <button type="submit" className="w-fit rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600">
               Save name, bio &amp; generate prompt
             </button>
           )}
         </form>
-      </section>
+      </Card>
 
-      <section className="flex flex-col gap-3 rounded-lg border p-4">
-        <h2 className="font-medium">System prompt (direct edit)</h2>
-        {saved === "prompt" && (
-          <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
-            System prompt saved.
-          </p>
-        )}
+      <Card className="flex flex-col gap-3">
+        <h2 className="font-semibold">System prompt (direct edit)</h2>
+        <SavedBanner value="prompt">System prompt saved.</SavedBanner>
         <p className="text-sm text-gray-500">
-          What your assistant actually sees. Edit the wording directly any time -- this section
-          only saves the text below, not the name/bio/questionnaire above.
+          What your assistant actually sees. Edit the wording directly any time -- this section only saves the text below, not the name/bio/questionnaire
+          above.
         </p>
         <form action={saveSystemPrompt} className="flex flex-col gap-3">
           <textarea
@@ -143,18 +106,15 @@ export default async function OnboardingPage({
             defaultValue={business.system_prompt ?? ""}
             disabled={!isOwner}
             rows={12}
-            className="rounded-md border px-3 py-2 font-mono text-xs"
+            className={`${inputClass} font-mono text-xs`}
           />
           {isOwner && (
-            <button
-              type="submit"
-              className="w-fit rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
-            >
+            <button type="submit" className="w-fit rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600">
               Save prompt text
             </button>
           )}
         </form>
-      </section>
+      </Card>
     </div>
   );
 }

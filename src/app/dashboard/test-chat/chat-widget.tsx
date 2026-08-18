@@ -37,7 +37,12 @@ export function ChatWidget({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Nothing to scroll to yet on first mount (empty message list) -- calling
+    // scrollIntoView then let a smooth-scroll animation race the page's own
+    // layout as it settles, landing the whole dashboard shell at the wrong
+    // final scroll position (a real bug, not just an empty-state no-op).
+    if (messages.length === 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, typing]);
 
   async function send() {
@@ -87,8 +92,8 @@ export function ChatWidget({
   }
 
   return (
-    <div className="flex h-[500px] flex-col rounded-lg border bg-white text-gray-900">
-      <div className="flex items-center gap-2 border-b px-4 py-3">
+    <div className="flex h-[500px] flex-col rounded-2xl border border-gray-100 bg-white text-gray-900 shadow-sm">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3">
         {assistantPhotoUrl ? (
           <Image
             src={assistantPhotoUrl}
@@ -112,7 +117,7 @@ export function ChatWidget({
             key={i}
             className={
               m.role === "visitor"
-                ? "ml-auto max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
+                ? "ml-auto max-w-[80%] rounded-lg bg-brand-500 px-3 py-2 text-sm text-white"
                 : m.role === "system"
                   ? "mx-auto max-w-[90%] rounded-md bg-yellow-50 px-3 py-2 text-center text-xs text-yellow-800"
                   : "mr-auto max-w-[80%] rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-900"
@@ -129,19 +134,19 @@ export function ChatWidget({
           e.preventDefault();
           send();
         }}
-        className="flex gap-2 border-t p-3"
+        className="flex gap-2 border-t border-gray-100 p-3"
       >
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type a message..."
-          className="flex-1 rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
+          className="flex-1 rounded-xl border border-gray-200 px-3.5 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
           disabled={sending}
         />
         <button
           type="submit"
           disabled={sending || !input.trim()}
-          className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
         >
           Send
         </button>

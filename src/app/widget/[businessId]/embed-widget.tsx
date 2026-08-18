@@ -56,7 +56,12 @@ export function EmbedWidget({
   }, [businessId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // See the same fix in the dashboard's test-chat widget: skip the
+    // scrollIntoView call on the initial empty-message mount, since a
+    // smooth-scroll animation racing the page's own layout as it settles
+    // can land the surrounding page at the wrong final scroll position.
+    if (messages.length === 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, typing]);
 
   // The iframe itself is resized by the parent page's loader script to

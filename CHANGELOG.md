@@ -3,6 +3,225 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Account/profile/password page, Manrope font, shared shell, real logo, and a real bug found in three existing pages
+
+Founder asked for four things at once: an account page (edit profile, change
+photo, change password -- there was no way to do any of this before), the
+Manrope font app-wide, a page-transition animation and faster-feeling
+navigation, and the `/plans` page showing the sidebar with each plan's real
+features listed. Explicitly asked that nothing existing break in the
+process -- worth calling out since that carefulness is exactly what surfaced
+a real, pre-existing bug below.
+
+**What was built:**
+
+- **`/dashboard/account`**: a new page + `actions.ts` (`updateProfile`,
+  `uploadAvatarPhoto`, `changePassword`). Display name and avatar photo are
+  stored in Supabase Auth's `user_metadata` (not a table), since they belong
+  to the person, not any one business membership -- the same person could
+  belong to more than one business. New `user-avatars` storage bucket
+  (public, mirrors the existing `assistant-photos` bucket pattern). The
+  header avatar now shows the signed-in person's own initials/photo (falls
+  back to business initials until they set one) and links to this page.
+- **Manrope** (`next/font/google`) replaces Geist Sans app-wide. Found a
+  latent bug while wiring it up: `globals.css`'s `body` rule had a hardcoded
+  `font-family: Arial, Helvetica, sans-serif` that silently won over the
+  Geist Sans variable, which was never actually referenced anywhere -- the
+  whole app has been rendering in plain Arial since Phase 0. Fixed at the
+  same time.
+- **`src/components/dashboard-shell.tsx`**: the sidebar+header shell
+  extracted into a shared component, used by both `dashboard/layout.tsx`
+  and the standalone `/plans` page -- `/plans` now has the full sidebar
+  without moving its route (see the earlier decision log for why moving it
+  was rejected: `/api/checkout`'s redirect and several hardcoded links point
+  at it).
+- **`/plans`** now lists each plan's real features (from `plan_limits` and
+  what's actually plan-gated in the code -- messages/month and booking
+  only), not invented marketing copy.
+- **`PageTransition`**: a small fade+slide-in on navigation (CSS keyframe,
+  keyed on pathname) -- no animation library added.
+- **`src/app/dashboard/loading.tsx`**: a skeleton shown instantly on
+  navigation while the target route's data loads, which is most of what
+  "the page feels slow" actually was -- every dashboard page fetches its
+  data synchronously with no streaming, so previously the user saw nothing
+  until every query resolved.
+- **Real logo wired in** (`logo-mark.tsx`): checks for `public/logo.webp` (or
+  `.png`/`.svg`) at request time and renders it via `next/image`, falling
+  back to a plain icon square otherwise. The founder's file arrived named
+  `Logo.webp` (capital L) -- renamed to lowercase before wiring it in, since
+  Vercel's production filesystem is case-sensitive and would 404 on the
+  capitalized name even though it works fine locally on Windows.
+- **Stat cards redesigned compact**: founder flagged too much blank vertical
+  space between the icon/label row and the value row. Changed from a
+  stacked layout to a single horizontal row (icon badge, bigger now, next to
+  label+value stacked tightly, action button at the end) -- same
+  information, much less empty space.
+
+**A real, pre-existing bug found and fixed, affecting three pages:**
+Building the account page's photo upload surfaced a genuine bug that has
+been live since Phase 1/2, well before today: **a page whose Server
+Component reads the `searchParams` prop, and which also contains an
+`<input type="file">` form, silently fails to submit that form** (zero
+network request ever fires) once the URL already carries a query string
+from an earlier action's redirect -- e.g. a user submits one form, gets
+redirected to `?saved=x`, then tries a second form (or retries the same one
+after an error) without reloading the page first. Confirmed this affected:
+- **`/dashboard/onboarding`** (photo upload, after saving the persona
+  questionnaire or system prompt) -- live since Phase 1/2.
+- **`/dashboard/knowledge`** (document upload, after any earlier upload
+  error) -- live since Phase 2.
+- **`/dashboard/account`** (the new photo upload, discovered while building
+  it today).
+
+Root-caused by testing methodically rather than assuming: confirmed the
+server action genuinely never runs (zero POST request), ruled out
+hydration/redirect timing, ruled out it being file-upload-specific in
+general (a plain text form on the same query-string-carrying page submits
+fine), and isolated it specifically to the `searchParams`-prop +
+file-input-form combination. **Fix**: moved every confirmation/error banner
+into new `src/app/dashboard/confirm-banners.tsx` client components that read
+the URL via `useSearchParams()` independently, instead of the Server
+Component itself declaring a `searchParams` prop. All three affected pages
+updated; no page still reads `searchParams` while also containing a file
+input.
+
+**Verified**: full existing regression suite re-run and passing
+(`verify-rls.mjs` 8/8, `e2e-phase1.mjs` 7/7, `verify-phase6-dashboard.mjs`
+11/11, `verify-embed-widget.mjs` 10/10) to confirm none of today's changes
+broke anything. New `verify-account-page.mjs` (8/8) proves the account page
+for real -- including logging back in with the changed password afterward,
+and confirming the old password stops working. New
+`verify-onboarding-photo-fix.mjs` (3/3) and `verify-knowledge-upload-fix.mjs`
+(2/2) reproduce the exact bug trigger condition (a stale query string
+already in the URL) and confirm the fix holds on both pre-existing pages.
+
+## 2026-08-18 — Brand color system + redesigned every inner dashboard page
+
+Founder shared the actual Falah Chat logo (a green stylized mark) and asked
+for two things: (1) that green as the primary brand color with black as
+secondary, and (2) the premium redesign extended to every inner page, not
+just the dashboard home -- correctly pointed out the rest of the app
+(conversations, bookings, embed, calendar, training, assistant setup, team,
+test chat) still looked like the old plain-bordered style.
+
+**What changed:**
+
+- **Brand color tokens** added to `globals.css` via Tailwind v4's `@theme`
+  (`brand-50` through `brand-900`), used everywhere a `violet`/`indigo`
+  placeholder accent was previously used, plus extended to every primary
+  button and link across the app (Save, Upload, Copy snippet, Connect
+  Google Calendar, Invite, Send, "View details" links, etc.). Black stays
+  the secondary/neutral accent -- active sidebar nav, avatar, dark hero
+  cards, unchanged.
+- **`src/app/dashboard/logo-mark.tsx`**: checks for `public/logo.png` at
+  request time (`fs.existsSync`) and renders it via `next/image` if
+  present, falling back to a plain brand-green icon square otherwise --
+  nothing else needs touching once the real logo file is dropped in.
+- **Every inner dashboard page redesigned** to the same card language as
+  the dashboard home (shadow-based cards via new shared
+  `src/app/dashboard/ui.tsx` `Card`/`PageHeader` components, rounded-2xl,
+  generous padding, brand-colored buttons/inputs/status badges):
+  conversations (list + detail), bookings, embed, calendar, training,
+  assistant setup, team, test chat. `/plans` (a separate top-level route,
+  not moved under the sidebar shell -- see decision below) got matching
+  card styling too, without changing its URL.
+
+**Decisions made (not explicit in any spec):**
+
+- **Color extracted by eye, not by pixel sampling** -- the logo arrived as
+  a pasted image with no accessible file path, so there was no way to
+  programmatically sample its exact color. Picked `#25D366`-ish (visually
+  close to the logo, in WhatsApp-green territory) and centralized it as a
+  single CSS variable specifically so it's a one-line fix if it's off once
+  the real file is available.
+- **`/plans` was not moved under `/dashboard`** despite being linked from
+  the sidebar -- it's referenced by `/api/checkout`'s redirect and several
+  hardcoded `href="/plans"` links elsewhere; moving it would have meant
+  updating all of those for a cosmetic-only change. Restyled its content in
+  place instead.
+- **The public embed widget's own button/bubble colors were left black,
+  not switched to brand green.** That widget represents each individual
+  business's assistant to their own customers, not Falah Chat itself --
+  bleeding our own brand color into every customer's chat experience would
+  look like white-labeling gone wrong. Brand green is reserved for surfaces
+  that are actually ours (the dashboard).
+
+**Two real bugs found while doing this pass, both by looking at rendered
+screenshots rather than trusting the code:**
+
+1. **Flex children need `min-h-0` to scroll internally instead of forcing
+   the whole panel taller than the viewport.** Any page whose content
+   exceeded one screen's height (e.g. `test-chat`, with its fixed 500px
+   widget) pushed the entire floating panel shell out of bounds instead of
+   scrolling within it. Fixed by adding `min-h-0` to the two intermediate
+   flex containers in `layout.tsx`'s scroll chain.
+2. **`scrollIntoView({ behavior: "smooth" })` firing on mount with an empty
+   message list** (both `chat-widget.tsx` and the public `embed-widget.tsx`)
+   raced the page's own layout as it settled, landing the entire dashboard
+   shell at the wrong final scroll position -- looked exactly like a broken
+   layout (header and sidebar logo scrolled off-screen) but was actually a
+   scroll-position bug with `window.scrollY` reporting the wrong resting
+   state. Fixed by skipping the call when there are no messages yet.
+
+**Verified**: screenshotted all 11 inner pages with realistic seeded data
+(Playwright), caught and fixed both bugs above by comparing screenshots
+before/after, then re-ran both full regression suites --
+`verify-phase6-dashboard.mjs` (11/11) and `verify-embed-widget.mjs` (10/10)
+-- to confirm the visual pass broke nothing real.
+
+**Still needed from the founder:** the actual `logo.png` file, saved into
+`public/logo.png` (or a file path on their machine) -- `logo-mark.tsx` is
+already wired to pick it up automatically once it's there.
+
+## 2026-08-18 — Dashboard UI redesign, round 2: "premium" pass
+
+Founder compared a live screenshot of the first redesign against the
+reference again and said it wasn't close enough -- correctly identified
+that the missing piece wasn't colors or icons, it was the overall *feel*:
+a floating panel on a soft background, shadow-based cards instead of thin
+borders, generous spacing, pill-style trend badges, and a filled-out header.
+
+**What changed:**
+
+- **Floating panel shell**: the whole app (sidebar + content) is now one
+  rounded, shadowed white panel inset on a soft gradient background
+  (indigo-to-violet, with two large blurred color blobs), rather than a flat
+  edge-to-edge page. This was the single biggest visual gap versus the
+  reference.
+- **Shadow-based cards** (`border-gray-100` + `shadow-sm`) replaced plain
+  1px borders throughout, with more generous padding (p-6 instead of p-4/5).
+- **Trend indicator is now a colored pill badge** (green/red rounded-full
+  chip) instead of plain gray text, matching the reference's "+15% vs last
+  week" chip.
+- **"View details" links are real blue hyperlinks** (`text-blue-600`) instead
+  of muted gray text -- reads as an actual link, not inert text.
+- **Added a functional header search** (`command-search.tsx`): filters and
+  jumps to any dashboard page, focusable with Cmd/Ctrl+K (matching the
+  reference's "⌘F" hint) -- a real quick-nav feature, not decoration, since
+  building a fake non-functional search box would leave a half-finished
+  element sitting in the header.
+- **Chart got a real period selector** (3/6/12 months, `usage-chart-panel.tsx`)
+  instead of a fixed "last 6 months" label -- fetches 12 months of usage_logs
+  once and slices client-side, so switching ranges needs no extra request.
+  Also added a connecting-line callout on the current month's bar, matching
+  the reference's tooltip-with-pointer detail.
+
+**Bug caught twice, worth noting explicitly:** the chart's outer flex
+container needs `items-stretch` (the default), not `items-end` -- `items-end`
+collapses each bar's column to its own content height instead of the
+chart's full height, so percentage-height bars have nothing to compute
+against and silently don't render. Got this right, then reintroduced it by
+accident while rewriting the component for round 2, caught it again by
+actually looking at the rendered screenshot rather than trusting the code
+read. If this component gets touched again, watch for this specifically.
+
+**Verified**: re-screenshotted the dashboard, bookings, and embed pages with
+realistic seeded data (Playwright, self-cleaning). Re-ran the full Phase 6
+functional regression suite (`verify-phase6-dashboard.mjs`) to confirm the
+visual pass didn't break any real functionality -- 11/11 passed (one
+assertion needed updating since it checked for now-removed "Bookings this
+month" wording; the underlying data and RLS isolation were never at risk).
+
 ## 2026-08-18 — Dashboard UI redesign
 
 Founder asked for a cleaner, more minimalist/professional look for the

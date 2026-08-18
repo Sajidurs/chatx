@@ -15,7 +15,7 @@ export function CopySnippetButton({ snippet }: { snippet: string }) {
     <button
       type="button"
       onClick={copy}
-      className="w-fit rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+      className="w-fit rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600"
     >
       {copied ? "Copied!" : "Copy snippet"}
     </button>

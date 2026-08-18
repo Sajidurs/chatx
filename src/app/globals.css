@@ -3,13 +3,41 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Brand green from the Falah Chat logo mark -- primary accent. Black
+     stays the secondary/neutral accent (buttons, active nav, dark cards),
+     unchanged from before this color was introduced. Scale built around a
+     best-effort visual read of the logo (no exact pixel sample was
+     available) -- swap --color-brand-500 here if it's ever off and every
+     component using `brand-*` utilities updates together. */
+  --color-brand-50: #e9fbf0;
+  --color-brand-100: #c8f5da;
+  --color-brand-200: #97ebbb;
+  --color-brand-300: #5fdc98;
+  --color-brand-400: #38cd7d;
+  --color-brand-500: #25d366;
+  --color-brand-600: #1cad53;
+  --color-brand-700: #178a44;
+  --color-brand-800: #146d38;
+  --color-brand-900: #0f5a2e;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-manrope);
   --font-mono: var(--font-geist-mono);
+
+  --color-brand-50: var(--color-brand-50);
+  --color-brand-100: var(--color-brand-100);
+  --color-brand-200: var(--color-brand-200);
+  --color-brand-300: var(--color-brand-300);
+  --color-brand-400: var(--color-brand-400);
+  --color-brand-500: var(--color-brand-500);
+  --color-brand-600: var(--color-brand-600);
+  --color-brand-700: var(--color-brand-700);
+  --color-brand-800: var(--color-brand-800);
+  --color-brand-900: var(--color-brand-900);
 }
 
 /* No dark-mode variant yet: every component (banners, chat bubbles, form
@@ -22,5 +50,25 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Previously hardcoded to "Arial, Helvetica, sans-serif" here, which sat
+     directly on the body element and silently won over the Geist Sans font
+     variable that was set up but never actually referenced anywhere -- the
+     whole app has been rendering in plain Arial this entire time. Fixed
+     while wiring up Manrope so it actually takes effect everywhere. */
+  font-family: var(--font-manrope), Arial, Helvetica, sans-serif;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-page-in {
+  animation: page-in 0.18s ease-out;
 }

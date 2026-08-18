@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { createClient } from "@/lib/supabase/server";
+import { Card } from "../../ui";
 
 export default async function ConversationDetailPage({
   params,
@@ -30,36 +32,39 @@ export default async function ConversationDetailPage({
 
   return (
     <div className="flex max-w-2xl flex-col gap-4">
-      <Link href="/dashboard/conversations" className="text-sm text-gray-500 hover:underline">
-        &larr; Back to conversations
+      <Link href="/dashboard/conversations" className="flex w-fit items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900">
+        <ArrowLeft className="h-4 w-4" />
+        Back to conversations
       </Link>
 
       <div>
-        <h1 className="text-xl font-semibold">Visitor {session.visitor_id.slice(0, 8)}</h1>
-        <p className="text-sm text-gray-600">Started {new Date(session.started_at).toLocaleString()}</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Visitor {session.visitor_id.slice(0, 8)}</h1>
+        <p className="text-sm text-gray-500">Started {new Date(session.started_at).toLocaleString()}</p>
       </div>
 
       {session.needs_handoff && (
-        <div className="rounded-md border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+        <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
           <p className="font-medium">This conversation was flagged for your attention.</p>
           <p>{session.handoff_reason}</p>
         </div>
       )}
 
-      <div className="flex flex-col gap-2 rounded-lg border p-4">
-        {messages?.map((m, i) => (
-          <div
-            key={i}
-            className={
-              m.role === "visitor"
-                ? "ml-auto max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
-                : "mr-auto max-w-[80%] rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-900"
-            }
-          >
-            {m.content}
-          </div>
-        ))}
-      </div>
+      <Card>
+        <div className="flex flex-col gap-2.5">
+          {messages?.map((m, i) => (
+            <div
+              key={i}
+              className={
+                m.role === "visitor"
+                  ? "ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-gray-900 px-3.5 py-2.5 text-sm text-white"
+                  : "mr-auto max-w-[80%] rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900"
+              }
+            >
+              {m.content}
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

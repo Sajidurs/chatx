@@ -2,34 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  MessagesSquare,
-  CalendarCheck,
-  FileText,
-  Bot,
-  MessageCircleMore,
-  Code2,
-  CalendarClock,
-  Users,
-  CreditCard,
-} from "lucide-react";
-
-const MAIN_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/conversations", label: "Conversations", icon: MessagesSquare },
-  { href: "/dashboard/bookings", label: "Bookings", icon: CalendarCheck },
-];
-
-const SETUP_ITEMS = [
-  { href: "/dashboard/knowledge", label: "Training", icon: FileText },
-  { href: "/dashboard/onboarding", label: "Assistant setup", icon: Bot },
-  { href: "/dashboard/test-chat", label: "Test chat", icon: MessageCircleMore },
-  { href: "/dashboard/embed", label: "Embed", icon: Code2 },
-  { href: "/dashboard/calendar", label: "Calendar", icon: CalendarClock },
-  { href: "/dashboard/team", label: "Team", icon: Users },
-  { href: "/plans", label: "Plan", icon: CreditCard },
-];
+import { MAIN_ITEMS, SETUP_ITEMS } from "./nav-items";
 
 function NavLink({
   href,
@@ -48,8 +21,8 @@ function NavLink({
   return (
     <Link
       href={href}
-      className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-        active ? "bg-black text-white" : "text-gray-600 hover:bg-gray-100"
+      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+        active ? "bg-gray-900 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
       }`}
     >
       <Icon className="h-4 w-4 shrink-0" />
