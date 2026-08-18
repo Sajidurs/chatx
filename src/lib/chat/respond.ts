@@ -16,8 +16,8 @@ const MATCH_COUNT = 5;
 export type ChatReply = { content: string; delayMs: number };
 
 export type RespondResult =
-  | { sessionId: string; blocked: true; blockedReason: string; replies: [] }
-  | { sessionId: string; blocked: false; replies: ChatReply[] };
+  | { sessionId: string; blocked: true; blockedReason: string; replies: []; controlledBy: "ai" | "human" }
+  | { sessionId: string; blocked: false; replies: ChatReply[]; controlledBy: "ai" | "human" };
 
 export async function respondToVisitorMessage(params: {
   businessId: string;
@@ -38,23 +38,26 @@ export async function respondToVisitorMessage(params: {
 
   // --- Resolve or create the chat session ---
   let sessionId = params.sessionId;
+  let controlledBy: "ai" | "human" = "ai";
   if (sessionId) {
     const { data: existing } = await admin
       .from("chat_sessions")
-      .select("id")
+      .select("id, controlled_by")
       .eq("id", sessionId)
       .eq("business_id", params.businessId)
       .maybeSingle();
     if (!existing) sessionId = undefined;
+    else controlledBy = existing.controlled_by;
   }
   if (!sessionId) {
     const { data: created, error } = await admin
       .from("chat_sessions")
       .insert({ business_id: params.businessId, visitor_id: params.visitorId })
-      .select("id")
+      .select("id, controlled_by")
       .single();
     if (error || !created) throw new Error("Could not create chat session");
     sessionId = created.id;
+    controlledBy = created.controlled_by;
   }
   // Non-null: the two blocks above guarantee sessionId is set by this point;
   // TS's control-flow narrowing doesn't carry that across the await points.
@@ -100,7 +103,16 @@ export async function respondToVisitorMessage(params: {
       blocked: true,
       blockedReason: "This business's assistant is temporarily unavailable. Please contact them directly.",
       replies: [],
+      controlledBy,
     };
+  }
+
+  // A human has taken this conversation over -- no AI reply, no quota
+  // consumed (there's no AI cost to charge against), just record the
+  // visitor's message (already done above) and let the widget's polling
+  // pick up whatever the human replies with.
+  if (controlledBy === "human") {
+    return { sessionId: resolvedSessionId, blocked: false, replies: [], controlledBy };
   }
 
   // Quota is checked (and, if allowed, consumed) before calling Claude at all
@@ -117,6 +129,7 @@ export async function respondToVisitorMessage(params: {
       blockedReason:
         "This business has reached its message limit for the month. Please contact them directly for further help.",
       replies: [],
+      controlledBy,
     };
   }
 
@@ -211,5 +224,6 @@ export async function respondToVisitorMessage(params: {
     sessionId: resolvedSessionId,
     blocked: false,
     replies: chunksOut.map((content) => ({ content, delayMs: computeTypingDelayMs(content) })),
+    controlledBy,
   };
 }

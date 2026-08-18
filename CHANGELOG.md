@@ -3,6 +3,113 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Human takeover, and a real chat-history bug in the embed widget
+
+Founder reported two things after testing live: (1) no way to actually reply
+to a customer as a human once a conversation needs attention -- only a
+notification, and (2) refreshing the browser as a visitor makes the chat
+history disappear, even though the conversation clearly still continues
+behind the scenes.
+
+**Chat history bug (real, pre-existing):** the embed widget's visible
+message list (`useState<Message[]>([])`) always started empty on mount --
+only the session ID persisted in `localStorage`, never the messages
+themselves. A returning visitor's *next* message would correctly continue
+the same conversation server-side (the AI still had full context), but
+nothing already said was ever redisplayed, so a refresh looked like the
+conversation had been wiped even though it hadn't. **Fixed**: on mount, if a
+session ID already exists in `localStorage`, the widget now fetches and
+redisplays the real history via the new `/api/chat/messages` endpoint before
+showing anything.
+
+**Human takeover -- built as fully specified:** take over a conversation
+(AI stops replying automatically), reply directly as yourself, and hand
+control back to the AI whenever you want -- which then reads through
+everything said while a human was in charge before continuing, not just
+picking up as if nothing happened.
+
+- **Schema**: `chat_sessions.controlled_by` (`'ai' | 'human'`, default
+  `'ai'`), and `chat_messages.role` now also allows `'business'` for a
+  human's own replies.
+- **`respond.ts`** skips calling Claude entirely once `controlled_by =
+  'human'` for a session -- no AI reply, no quota consumed (there's no AI
+  cost to charge against), just records the visitor's message for the human
+  to see and reply to.
+- **Handing control back needed no new "resume" logic** -- the history
+  builder already treats any non-visitor role as "the business side" of the
+  conversation for Claude's context, so a mix of AI and human messages just
+  reads as one continuous conversation once the AI takes over again.
+- **New `/api/chat/messages`** (public, keyed by the same unguessable
+  session ID used everywhere else): lets the widget discover a human's reply
+  it wasn't the one to trigger, and lets the dashboard's conversation view
+  stay live without a manual refresh. Both poll every 4 seconds while open.
+- **`/dashboard/conversations/[sessionId]`**: a "Take over" / "Hand back to
+  AI" button and a reply box, live-updating as new messages come in either
+  direction.
+
+**Decisions made (not explicit in the request):**
+
+- **Polling, not a live subscription.** The widget is fully anonymous/public;
+  giving it real-time Supabase access would need a real RLS story for
+  unauthenticated visitors, which the current architecture (all writes via
+  the service-role client) deliberately avoids. A 4-second poll is a
+  reasonable trade for not opening that surface.
+- **The widget must poll continuously once open, not only after it already
+  knows a human has taken over** -- there's no other way for it to discover
+  a takeover it didn't trigger itself (an owner can take over while a
+  visitor is just sitting there, mid-silence). Found this the hard way: the
+  first version only started polling *after* learning `controlledBy ===
+  "human"` from one of the visitor's own requests, which never happens if
+  they never send another message.
+- **A message a browser tab just sent is never re-added from its own poll.**
+  Found a real duplication bug while verifying this: a poll tick landing
+  while a send request was still in flight (using a timestamp cursor from
+  before that message existed) could re-fetch and re-display a visitor's or
+  owner's own just-sent message a second time. Fixed by having each side's
+  poll simply skip messages carrying its own role, since nothing legitimately
+  needs to be "discovered" that way -- it's always already shown optimistically.
+- **`chat_sessions.controlled_by` uses the same RLS + column-grant pattern**
+  already established for `business_users.invite_token` (row policy scoped
+  to the caller's own business, `revoke`/`grant` limited to the one column
+  members should touch) -- the reply/take-over/hand-back actions
+  additionally verify session ownership in the server action itself, using
+  the admin client, since chat_messages has never had a client-facing insert
+  policy (every write to it, by any actor, has always gone through the
+  service role).
+
+**Verified end-to-end** (real Claude calls, real Playwright browser, two
+separate real users -- a visitor and an owner) via
+`scripts/verify-takeover-and-history.mjs`: **7/7 checks passed**, run
+consistently multiple times. Confirmed: history survives a real page
+refresh; taking over sets `controlled_by` and clears `needs_handoff`; the
+reply saves as a real `role='business'` row; the visitor sees it purely via
+polling, having sent nothing themselves; the AI generates zero replies while
+a human is in control; handing back flips control; and the AI's next reply
+after that genuinely has context of what the human said. Re-ran the entire
+existing regression suite (RLS, booking, dashboard, embed widget, account,
+onboarding, knowledge, leads) -- all still passing.
+
+**Known limitation, not asked for:** if two different staff members reply
+from two different browser tabs at the same time, each tab's poll currently
+filters out *all* `business`-role messages (to avoid the duplication bug
+above), so a second staff member's reply from another tab wouldn't show up
+live in the first tab without a manual refresh. Fine for the current
+single-person-replying use case; would need a per-tab identity to fix
+properly if multi-staff-simultaneous-reply ever becomes a real need.
+
+**Environment note, not code-related but worth recording:** discovered
+mid-session that this machine's C: drive (~100GB total) was completely
+full, which was very likely the real cause of a lot of today's unrelated
+flakiness (random OOM crashes, orphaned dev-server processes, intermittent
+timeouts) -- a full disk causes cascading OS-level issues well beyond
+explicit "no space" errors. Freed ~5GB by clearing the npm cache (safe,
+just re-downloads packages as needed); confirmed `next dev --turbopack`
+itself temporarily uses several more GB while actively running, released
+on stop. The rest of the disk is Windows system files and the founder's own
+documents -- recommend running Windows' own Disk Cleanup / Storage Sense,
+or moving to a larger drive, since ~100GB is genuinely tight for active
+development alongside everything else already on this machine.
+
 ## 2026-08-18 — Deployed leads feature; caught a real gap in the verification process
 
 Redeployed the lead capture work to production. The first deploy attempt

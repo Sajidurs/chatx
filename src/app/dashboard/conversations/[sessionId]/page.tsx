@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { createClient } from "@/lib/supabase/server";
-import { Card } from "../../ui";
+import { ConversationPanel } from "./conversation-panel";
 
 export default async function ConversationDetailPage({
   params,
@@ -17,7 +17,7 @@ export default async function ConversationDetailPage({
   const supabase = await createClient();
   const { data: session } = await supabase
     .from("chat_sessions")
-    .select("id, visitor_id, started_at, needs_handoff, handoff_reason")
+    .select("id, visitor_id, started_at, needs_handoff, handoff_reason, controlled_by")
     .eq("id", sessionId)
     .eq("business_id", context.business.id)
     .single();
@@ -49,22 +49,15 @@ export default async function ConversationDetailPage({
         </div>
       )}
 
-      <Card>
-        <div className="flex flex-col gap-2.5">
-          {messages?.map((m, i) => (
-            <div
-              key={i}
-              className={
-                m.role === "visitor"
-                  ? "ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-gray-900 px-3.5 py-2.5 text-sm text-white"
-                  : "mr-auto max-w-[80%] rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900"
-              }
-            >
-              {m.content}
-            </div>
-          ))}
-        </div>
-      </Card>
+      <ConversationPanel
+        sessionId={sessionId}
+        initialControlledBy={session.controlled_by}
+        initialMessages={(messages ?? []).map((m) => ({
+          role: m.role as "visitor" | "assistant" | "business",
+          content: m.content,
+          createdAt: m.created_at,
+        }))}
+      />
     </div>
   );
 }

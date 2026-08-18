@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
-type Message = { role: "visitor" | "assistant" | "system"; content: string };
+type Message = { role: "visitor" | "assistant" | "business" | "system"; content: string };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,8 +41,11 @@ export function EmbedWidget({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [humanControlled, setHumanControlled] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const visitorIdRef = useRef<string | undefined>(undefined);
+  const lastMessageAtRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -59,10 +62,30 @@ export function EmbedWidget({
   // site, since this iframe is always loaded from our own origin no matter
   // which site embeds it -- localStorage here is scoped per business ID so
   // one visitor chatting with two different businesses never mixes identity.
+  // The session ID surviving a refresh was already true before this, but the
+  // visible message list was not -- `messages` always started empty, so a
+  // refreshed visitor saw a blank panel even though the AI still remembered
+  // everything. Reload the real history here so what's on screen matches
+  // what's actually stored, refresh or not.
   useEffect(() => {
     visitorIdRef.current = localStorage.getItem(`chatx_visitor_${businessId}`) || undefined;
     sessionIdRef.current = localStorage.getItem(`chatx_session_${businessId}`) || undefined;
     setLeadCaptured(!!sessionIdRef.current);
+
+    if (!sessionIdRef.current) {
+      setHistoryLoaded(true);
+      return;
+    }
+    fetch(`/api/chat/messages?sessionId=${sessionIdRef.current}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.messages?.length) {
+          setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })));
+          lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
+        }
+        setHumanControlled(data.controlledBy === "human");
+      })
+      .finally(() => setHistoryLoaded(true));
   }, [businessId]);
 
   useEffect(() => {
@@ -85,6 +108,40 @@ export function EmbedWidget({
     const observer = new ResizeObserver(() => postSizeToParent(el));
     observer.observe(el);
     return () => observer.disconnect();
+  }, [open, leadCaptured]);
+
+  // Poll for new messages whenever the panel is open, not only once we
+  // already know a human has taken over -- that state itself can only
+  // change while the visitor is just sitting there (an owner taking over
+  // mid-conversation), so there's no "your own message's response told you"
+  // moment to hang the decision to start polling on. The interval is a
+  // little wasteful while the AI is answering normally (those replies
+  // already arrive synchronously), but it's the only way to reliably learn
+  // about a takeover the visitor didn't trigger themselves.
+  useEffect(() => {
+    if (!open || !sessionIdRef.current) return;
+    const interval = setInterval(async () => {
+      const res = await fetch(
+        `/api/chat/messages?sessionId=${sessionIdRef.current}&after=${encodeURIComponent(lastMessageAtRef.current || "")}`
+      );
+      const data = await res.json().catch(() => null);
+      if (!data) return;
+      if (data.messages?.length) {
+        // A visitor's own message is always already shown the instant they
+        // send it (optimistic update in sendMessage) -- if a poll tick
+        // happens to land while that request is still in flight, using a
+        // cursor from before it was sent, it would otherwise come back and
+        // render as a second, duplicate copy of what they just typed.
+        // Nothing about *their own* message ever legitimately needs to be
+        // discovered this way, only replies from elsewhere (the AI's or a
+        // human's), so those are the only roles polling needs to surface.
+        const newOnes = data.messages.filter((m: { role: string }) => m.role !== "visitor");
+        if (newOnes.length) setMessages((prev) => [...prev, ...newOnes.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }))]);
+        lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
+      }
+      setHumanControlled(data.controlledBy === "human");
+    }, 4000);
+    return () => clearInterval(interval);
   }, [open, leadCaptured]);
 
   async function sendMessage(text: string, lead?: { name: string; email: string }) {
@@ -116,6 +173,8 @@ export function EmbedWidget({
       visitorIdRef.current = data.visitorId;
       localStorage.setItem(`chatx_session_${businessId}`, data.sessionId);
       localStorage.setItem(`chatx_visitor_${businessId}`, data.visitorId);
+      lastMessageAtRef.current = new Date().toISOString();
+      setHumanControlled(data.controlledBy === "human");
 
       if (data.blocked) {
         setMessages((prev) => [...prev, { role: "system", content: data.blockedReason }]);
@@ -197,7 +256,10 @@ export function EmbedWidget({
                 {(assistantName || "A")[0].toUpperCase()}
               </div>
             )}
-            <span className="text-sm font-medium">{assistantName || "Assistant"}</span>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">{assistantName || "Assistant"}</span>
+              {humanControlled && <span className="text-[11px] text-gray-500">A team member has joined the chat</span>}
+            </div>
           </div>
           <button
             type="button"
@@ -211,7 +273,7 @@ export function EmbedWidget({
           </button>
         </div>
 
-        {!leadCaptured ? (
+        {!historyLoaded ? null : !leadCaptured ? (
           <form
             onSubmit={(e) => {
               e.preventDefault();
