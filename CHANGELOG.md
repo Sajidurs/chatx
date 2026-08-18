@@ -3,6 +3,22 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Deployed leads feature; caught a real gap in the verification process
+
+Redeployed the lead capture work to production. The first deploy attempt
+failed the build: an unescaped apostrophe in `leads/page.tsx` tripped
+Next's `react/no-unescaped-entities` ESLint rule, which `tsc --noEmit`
+(what's been run before every deploy so far) never catches -- it only
+checks types, not lint rules, and Next's production build enforces both.
+Fixed the apostrophe, then ran a full local `npm run build` to confirm
+before redeploying rather than relying on `tsc` alone. **Decision:** a real
+production build (not just `tsc --noEmit`) is now part of pre-deploy
+verification going forward, not only the type-check.
+
+Redeployed successfully; confirmed live: a real `/api/chat` call against
+`chatx-rust.vercel.app` returns a real Claude reply, and the new intake form
+actually renders on the live widget.
+
 ## 2026-08-18 — Lead capture before chat starts
 
 Founder asked for lead capture: a visitor gives their name, email, and an
