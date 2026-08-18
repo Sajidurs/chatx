@@ -3,6 +3,65 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Dashboard UI redesign
+
+Founder asked for a cleaner, more minimalist/professional look for the
+dashboard, with a reference screenshot of a sidebar-based SaaS dashboard
+(pastel stat cards, a dark hero stat card, a rounded bar chart, a table with
+colored status text, an insights panel with icon badges). Purely a visual
+pass -- no new functionality, all numbers shown are the same real Phase 6
+data, just presented differently.
+
+**What changed:**
+
+- **Sidebar shell** (`src/app/dashboard/layout.tsx` + new `sidebar-nav.tsx`)
+  replaces the old top-nav header: icon + label nav items (grouped "Main" /
+  "Setup"), active route highlighted, a notification bell in the top bar
+  showing a real badge count of conversations flagged `needs_handoff`
+  (linking to Conversations), and an initials avatar.
+- **Dashboard home** (`page.tsx`) rebuilt with: three pastel stat cards
+  (Conversations, Bookings, Resolution rate -- the last computed as
+  `(total - needs_handoff) / total`, a real analog to "accuracy" from the
+  reference), a dark "Messages this month" hero card with real month-over-
+  month % change, an upgrade CTA card (only shown below Pro), the 6-month
+  usage chart restyled as rounded violet bars with a floating count label on
+  the current month, a real "Highlights" panel (handoff status, usage
+  status, next upcoming booking -- all real data, not placeholder copy), and
+  a "Recent bookings" table with colored status text.
+- Added `lucide-react` (small, tree-shakeable icon set, no other runtime
+  deps) -- the project had no icon library before this.
+
+**Decisions made (not explicit in any spec):**
+
+- **Kept black as the primary accent** (buttons, active nav state) rather
+  than adopting the reference's purple as a global rebrand -- the reference
+  itself uses black for its primary actions too (arrow buttons, active nav,
+  the hero card), purple only appears as a sparing brand-logo/chart accent.
+  Changing every button color app-wide (login, signup, checkout, etc.) was
+  out of scope for "clean up the dashboard UI" and would have been a much
+  bigger, riskier change than asked for.
+- **Scope limited to the dashboard shell + dashboard home page.**
+  Conversations/bookings/embed/calendar/etc. inherit the new sidebar shell
+  automatically (confirmed all still render with zero errors) but weren't
+  individually redesigned card-by-card -- reasonable given the reference was
+  one dashboard-home screenshot, not a full app redesign brief.
+- Fixed a real layout bug while building the chart: the bar container's
+  `items-end` was collapsing each column to its own content height instead
+  of the chart's full height, so percentage-height bars had nothing to
+  compute against and rendered invisibly. Caught by actually looking at the
+  rendered screenshot, not just reading the code -- exactly the kind of bug
+  that's invisible in a code review.
+
+**Verified**: seeded a real business with realistic data (6 conversations, 2
+flagged for handoff, 5 bookings in various statuses, 6 months of usage) and
+screenshotted the real rendered dashboard, bookings, and conversations pages
+via Playwright. Confirmed the chart bars actually render, the handoff badge
+count matches between the bell and the conversations list, and status colors
+render correctly. Added `scripts/screenshot-dashboard.mjs` (self-cleaning) as
+a reusable tool for previewing future UI changes with realistic data, and
+`scripts/check-other-pages.mjs` as a quick smoke test that the rest of the
+dashboard still renders under the new shell.
+
 ## 2026-08-18 — Phase 6: dashboard and analytics (done)
 
 **Area:** Conversation history, booking list, usage/analytics charts, and

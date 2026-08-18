@@ -46,3 +46,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# generated preview screenshots (scripts/screenshot-dashboard.mjs)
+scripts/*.png
