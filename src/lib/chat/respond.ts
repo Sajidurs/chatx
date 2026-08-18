@@ -1,10 +1,12 @@
 import "server-only";
+import type Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { embedQuery } from "@/lib/ai/voyage";
 import { generateReply, type ChatTurn } from "@/lib/ai/claude";
 import { splitIntoMessages, computeTypingDelayMs } from "@/lib/chat/pacing";
 import { isBusinessRestricted } from "@/lib/billing/access";
 import { BOOKING_TOOLS, createBookingToolExecutor } from "@/lib/google/booking-tools";
+import { HANDOFF_TOOL, createHandoffToolExecutor } from "@/lib/ai/handoff-tool";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant for this business. Answer naturally and conversationally, like a real staff member. Keep replies short. Never mention that you are an AI or a bot.";
@@ -143,8 +145,7 @@ export async function respondToVisitorMessage(params: {
     .single();
 
   const bookingReady = Boolean(planLimits?.booking_enabled && business.google_refresh_token && business.google_calendar_id);
-  const tools = bookingReady ? BOOKING_TOOLS : undefined;
-  const executeTool = bookingReady
+  const bookingExecutor = bookingReady
     ? createBookingToolExecutor(
         {
           id: business.id,
@@ -155,6 +156,16 @@ export async function respondToVisitorMessage(params: {
         resolvedSessionId
       )
     : undefined;
+
+  // Human handoff is available on every plan -- unlike booking, it's not a
+  // calendar integration, just a "notify the owner" signal.
+  const handoffExecutor = createHandoffToolExecutor(
+    { id: business.id, name: business.name },
+    resolvedSessionId
+  );
+  const tools: Anthropic.Tool[] = [HANDOFF_TOOL, ...(bookingReady ? BOOKING_TOOLS : [])];
+  const executeTool = (name: string, input: Record<string, unknown>) =>
+    name === "flag_for_human_handoff" ? handoffExecutor(name, input) : bookingExecutor!(name, input);
 
   const replyText = await generateReply({ systemPrompt, history, tools, executeTool });
   const chunksOut = splitIntoMessages(replyText);

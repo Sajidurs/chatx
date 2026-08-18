@@ -3,6 +3,232 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Phase 6: dashboard and analytics (done)
+
+**Area:** Conversation history, booking list, usage/analytics charts, and
+human handoff notifications.
+
+**What was built:**
+
+- **`/dashboard/conversations`** + **`/dashboard/conversations/[sessionId]`**:
+  every conversation a business's assistant has had, with a "Needs your
+  help" badge on flagged ones; clicking in shows the full real message
+  thread, read-only.
+- **`/dashboard/bookings`**: every booking made through the assistant, with a
+  status badge (confirmed/rescheduled/cancelled).
+- **Usage/analytics section on `/dashboard`**: messages used this month vs
+  the plan's limit (a progress bar that turns yellow at 80%, red at the
+  limit; "Unlimited" on Pro), bookings made this month, and a 6-month bar
+  chart of message volume.
+- **`src/lib/ai/handoff-tool.ts`**: a new `flag_for_human_handoff` tool,
+  available to Claude on every conversation regardless of plan (unlike
+  booking, this isn't a calendar integration -- it's a "notify the owner"
+  signal). Sets `chat_sessions.needs_handoff` + `handoff_reason` and emails
+  the business owner via Resend, reusing the same pattern as the existing
+  invoice-reminder email.
+- **`supabase/migrations/20260818000000_handoff_flag.sql`**: adds
+  `needs_handoff` (bool) and `handoff_reason` (text) to `chat_sessions`.
+
+**Decisions made (not explicit in system_design.md):**
+
+- **Handoff detection is a tool call, not keyword matching.** Claude decides
+  for itself when it's genuinely stuck (a complaint, an explicit request for
+  a human, something outside its knowledge) rather than pattern-matching
+  phrases like "human" or "agent," which would both over-trigger (visitor
+  says "are you human?") and under-trigger (frustration that never uses
+  those words). Consistent with how booking already uses tool calling
+  instead of parsing free text.
+- **Handoff only fires once per conversation** (checked via
+  `needs_handoff` before re-flagging) -- otherwise a visitor who stays
+  frustrated for several more messages would re-email the owner on every
+  turn.
+- **No new charting library added.** The 6-month usage bar chart is
+  hand-rolled HTML/CSS (single-hue magnitude bars) rather than pulling in
+  Recharts/Chart.js for one simple chart -- consistent with this project's
+  lean-dependency approach so far, and there's no multi-series/categorical
+  need that would justify a library.
+- **"Bookings this month" counts by `created_at`** (when the booking was
+  made), not `start_time` (when the meeting happens) -- matches the spec's
+  wording ("bookings made") and usage_logs' own convention of counting
+  activity by the month it occurred in, not some future date.
+
+**Verified end-to-end** (real dev server, two real businesses, Playwright)
+via `scripts/verify-phase6-dashboard.mjs`: **11/11 checks passed**. A
+genuinely frustrated real conversation ("your product broke, I've emailed
+three times, I need a real human") correctly triggered the handoff flag
+*without* any booking tools available, proving handoff works independent of
+the booking feature. The dashboard's usage number matched a seeded
+`usage_logs` row exactly. Critically, confirmed **RLS isolation**: logged in
+as business A's owner, direct navigation to business B's conversation URL
+returned a 404, not another business's private conversation. Cleaned up all
+test businesses/users/data afterward.
+
+**Still incomplete / next step:**
+
+- No pagination on conversations/bookings lists (capped at 100/200 rows) --
+  fine at current volume, revisit if a business's history grows large.
+- Next up: Phase 7 (launch prep) -- pricing/landing page, onboarding docs, a
+  real pilot business onboarded fully end to end, public launch.
+
+## 2026-08-18 — Real-world confirmation: widget live on an actual customer site
+
+Founder pasted the real snippet on a real live WordPress site
+(`fastrock.ae`) via the Theme File Editor's `<head>` section. First check
+showed nothing -- turned out the founder was checking a *different* site
+(`wallxer.com`) than the one they'd actually edited, which cost some time
+chasing a non-issue. Once pointed at the right domain
+(`fastrock.ae`), confirmed independently with a fresh, logged-out
+Playwright browser session (not the founder's own WP-admin-logged-in view,
+which caching plugins typically exempt from the cache and so isn't proof of
+what a real visitor sees): the script tag is present, correctly pointing at
+`chatx-rust.vercel.app` with the right business ID, and the widget iframe
+renders at the expected position.
+
+Added `scripts/check-widget-live.mjs <url>` -- a small reusable diagnostic
+(not tied to one business) for the next time a business reports "the widget
+isn't showing," since a stale cache serving admins one page and visitors
+another is likely to recur with any WordPress-hosted business.
+
+## 2026-08-18 — Fixed: embed.js could fail if pasted in `<head>`
+
+Founder asked about pasting the snippet into the WordPress Theme File
+Editor's `<head>` section (before `</head>`) instead of a footer plugin.
+Technically fine either way, but it surfaced a real gap in `public/embed.js`:
+it called `document.body.appendChild(iframe)` unconditionally, and with the
+snippet's `async` attribute, a `<head>` placement could execute before
+`<body>` exists in the DOM at all -- `document.body` would be `null` and the
+widget would silently fail to appear (no crash, no visible error, just a
+missing bubble). Footer placement never triggered this since `<body>`
+already exists by the time a footer script runs, so `scripts/verify-embed-widget.mjs`
+never caught it.
+
+**Fix:** `embed.js` now checks for `document.body` and falls back to a
+`DOMContentLoaded` listener if it isn't there yet -- safe regardless of where
+the snippet is pasted.
+
+**Verified:** new `scripts/verify-embed-head-placement.mjs` loads a real
+page with the script placed in `<head>`, before `<body>`, in a real browser
+-- widget mounts with zero errors. Re-ran the full `verify-embed-widget.mjs`
+suite too (footer placement): still 10/10, no regression. Redeployed to
+production (https://chatx-rust.vercel.app) and confirmed the fix is live.
+
+**Practical note passed to the founder:** editing the Theme File Editor
+directly changes the theme's actual files -- a theme update can silently
+wipe that edit out. A plugin like WPCode (footer section) survives theme
+updates; editing `header.php`/`footer.php` directly is only durable on a
+child theme.
+
+## 2026-08-18 — First public deployment (preview, ahead of Phase 7)
+
+Founder wanted to test the real embed snippet on their real WordPress site,
+which surfaced a real gap: the app had only ever run on `localhost`, so a
+real visitor's browser had nothing reachable to load. system_design.md puts
+public launch at Phase 7, but nothing about testing the widget on a real
+site required waiting that long -- deployed a working preview now instead of
+blocking on the rest of the phase order, with the founder's explicit sign-off
+before the deploy went live (Vercel's free Hobby tier, no cost).
+
+- Linked the repo to a new Vercel project (`chatx`, under the founder's
+  existing Vercel account). GitHub auto-deploy-on-push isn't connected yet
+  (Vercel needs a GitHub login connection added on the founder's account
+  first) -- deploys are manual (`vercel --prod`) until that's set up.
+- Pushed every secret from `.env.local` into Vercel's Production environment
+  variables (never printed to a terminal or committed anywhere).
+- Production URL: **https://chatx-rust.vercel.app**. Set
+  `NEXT_PUBLIC_APP_URL` and `GOOGLE_REDIRECT_URI` specifically for the
+  Production environment to match this real domain (local dev keeps using
+  `localhost:3000` in `.env.local`, untouched).
+- **Verified live**: a real `/api/chat` request against the production URL
+  returned a real Claude reply; `/embed.js` and `/widget/<businessId>` both
+  return 200 on the live domain. Cleaned up the test chat session afterward.
+
+**Known gap, needs founder action before those specific features work on
+this URL:**
+
+- Google Calendar OAuth will fail on this domain until
+  `https://chatx-rust.vercel.app/api/google/callback` is added to the
+  authorized redirect URIs in Google Cloud Console (chat itself works fine
+  without this).
+- Stripe billing needs a new webhook endpoint pointed at
+  `https://chatx-rust.vercel.app/api/webhooks/stripe` with its own signing
+  secret set as `STRIPE_WEBHOOK_SECRET` in Vercel -- the value currently
+  there is copied from the local `stripe listen` session and won't receive
+  real events.
+
+## 2026-08-18 — Phase 5: embeddable widget (done)
+
+**Area:** Public embed snippet + the actual floating chat widget businesses
+put on their own website.
+
+**What was built:**
+
+- **`src/lib/business/public-profile.ts`**: a public, no-auth lookup that
+  returns only what an anonymous website visitor is allowed to see (id, name,
+  assistant name/photo) -- never plan, billing status, system prompt, or
+  calendar info. Same trust model as `/api/chat` (businessId is public,
+  untrusted input, scoped service-role query).
+- **`src/app/widget/[businessId]/page.tsx` + `embed-widget.tsx`**: the actual
+  widget -- a floating bubble that expands into a chat panel with the
+  business's persona name/photo, message bubbles, and a typing-dots
+  indicator, reusing the same `/api/chat` pipeline and message-pacing
+  behavior as the dashboard's test-chat page. Visitor identity persists
+  across page reloads via `localStorage`, keyed per business ID.
+- **`public/embed.js`**: the actual snippet businesses paste onto their site
+  -- a single dependency-free `<script>` tag (`data-business-id="..."`) that
+  creates a fixed-position iframe pointing at `/widget/<businessId>` and
+  listens for `postMessage` size reports to resize the iframe between
+  bubble-sized (collapsed) and panel-sized (open).
+- **`/dashboard/embed`**: a new dashboard page generating the exact snippet
+  for the logged-in business, with a copy-to-clipboard button.
+
+**Decisions made (not explicit in system_design.md):**
+
+- **Iframe isolation, not Shadow DOM**, even though the spec allowed either.
+  Shadow DOM still inherits CSS properties like `color`/`font-family` across
+  its boundary by default -- the same category of bug that caused the
+  earlier "unreadable chat text" incident on the dashboard's own test-chat
+  page. An iframe is a fully separate document: nothing the host site does
+  (resets, dark themes, `* { all: unset }`) can reach in, and nothing our
+  widget does can leak out. This also means `/api/chat` needed zero CORS
+  changes -- the iframe is same-origin to our own app; only the parent
+  page's `<script>` tag is cross-origin, and that only ever talks to the
+  iframe via `postMessage`, never touches our API directly.
+- **Iframe size is measured, not hardcoded.** A `ResizeObserver` on the
+  widget's own root element reports its real rendered size to the parent
+  page on every change, instead of two hand-picked pixel constants living in
+  two different files (`embed-widget.tsx` and `embed.js`) that could drift
+  out of sync.
+- **`devIndicators: false`** added to `next.config.ts`. Next's own dev-mode
+  indicator badge anchors to the same bottom-right corner our bubble does,
+  inside the same small iframe viewport, and was intercepting clicks during
+  verification. Dev-only setting, no effect on production builds.
+- **`src/middleware.ts`** now excludes `/widget` and `/embed.js` from the
+  Supabase session-refresh pass -- both are fully anonymous, cookie-free
+  surfaces that could be loaded at real volume across many third-party
+  sites, with no reason to pay for an auth-cookie refresh on every load.
+  (`/api/chat` was left as-is; that's pre-existing Phase 3/4 behavior, out of
+  scope here.)
+
+**Verified end-to-end with a real browser (Playwright) against a plain
+static HTML host page with deliberately hostile, conflicting global CSS**
+(`* { all: unset }`, forced dark background, forced Comic Sans, `!important`
+everywhere) via `scripts/verify-embed-widget.mjs`: **10/10 checks passed**.
+Confirmed: the host page's own styling is untouched by us; the iframe loads
+the exact business ID from the snippet; the widget starts bubble-sized and
+correctly loads *that* business's real persona name; opening the panel
+resizes the iframe live via the postMessage protocol; the widget's own
+button styling survived the host's `all: unset` reset completely intact
+(true isolation, not luck); a real message got a real reply through the live
+`/api/chat` pipeline; closing collapses it back down; no console errors.
+Cleans up its own test chat session afterward.
+
+**Still incomplete / next step:**
+
+- No visual customization yet (widget color/position aren't configurable) --
+  not in the Phase 5 spec, a possible Phase 6+ differentiator.
+- Next up: Phase 6 (dashboard and analytics) -- conversation history,
+  booking list, usage charts, and human-handoff notifications.
+
 ## 2026-08-18 — Fixed: bookings confirmed for the wrong year
 
 Founder manually tested booking via `/dashboard/test-chat` (Wallxer) and
@@ -638,6 +864,25 @@ below) rather than leaving it here stale.
   founder's own test-user email can connect a calendar right now. Needs
   Google's app verification process before any real business can connect
   their own calendar. Not needed until Phase 7 (public launch).
+- **No concept of a business's timezone anywhere in the system -- bookings
+  made with a bare, unqualified time are likely off by the business's real
+  UTC offset.** Found 2026-08-18: a real Wallxer test booking, visitor said
+  "date: 20 August, 10AM" (no timezone given, which is how real customers
+  will normally talk), Claude booked it as `2026-08-20T10:00:00+00:00` --
+  i.e. treated the bare "10AM" as UTC directly, zero conversion applied.
+  Wallxer's Google Calendar displays in Dhaka time (UTC+6), so the event
+  shows as 4:00 PM there instead of the intended 10:00 AM local -- a 6-hour
+  miss. `respond.ts`'s system prompt only ever states the current time in
+  UTC (added 2026-08-18 to fix the wrong-year bug, see that entry below);
+  it never had any business-local timezone to reason from, and
+  `src/lib/google/calendar.ts`'s `createCalendarEvent`/`patchCalendarEvent`
+  never send a `timeZone` field on the event either. Real fix needs: a
+  `businesses.timezone` column (set during onboarding), `respond.ts`'s date
+  context stating current time in *that* zone instead of only UTC, and
+  passing that same `timeZone` through to every Google Calendar API call so
+  the event both stores and displays correctly regardless of the calendar
+  owner's own account settings. Deferred at the founder's request --
+  logged here so it isn't lost, not fixed yet.
 
 ## 2026-08-15 — Phase 0: Foundation (done)
 

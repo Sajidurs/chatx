@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Plain test host page (hostile CSS)</title>
+<style>
+  /* Intentionally aggressive, real-world-style global resets/overrides to
+     prove the embedded widget is immune to them. */
+  * {
+    all: unset;
+    box-sizing: border-box;
+  }
+  html, body {
+    display: block;
+    background: #0b0b0b !important;
+    color: #39ff14 !important;
+    font-family: "Comic Sans MS", cursive !important;
+    font-size: 30px !important;
+  }
+  button, input, iframe { all: revert; } /* even this shouldn't matter for the iframe's inner content */
+  p { display: block; padding: 20px; }
+</style>
+</head>
+<body>
+  <p id="host-marker">HOST PAGE CONTENT -- if you can read this in a huge green Comic Sans font, the host page's own styling is untouched.</p>
+
+  <script src="http://localhost:3000/embed.js" data-business-id="390cde0b-76ed-49e6-93f2-0091a2439cdd" async></script>
+</body>
+</html>

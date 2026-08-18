@@ -22,3 +22,19 @@ export async function sendInvoiceUpcomingReminder(params: {
     text: `Your ${params.businessName} subscription will renew soon.\n\nAmount due: ${params.amountDue}\nRenewal date: ${params.dueDate}\n\nNo action is needed if your payment method is up to date.`,
   });
 }
+
+export async function sendHandoffNotification(params: {
+  to: string;
+  businessName: string;
+  reason: string;
+  sessionId: string;
+}) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return resend.emails.send({
+    from: FROM_ADDRESS,
+    to: params.to,
+    subject: `A visitor needs your help -- ${params.businessName}`,
+    text: `Your assistant couldn't fully help a visitor and flagged this conversation for you.\n\nReason: ${params.reason}\n\nView the conversation: ${appUrl}/dashboard/conversations/${params.sessionId}`,
+  });
+}
