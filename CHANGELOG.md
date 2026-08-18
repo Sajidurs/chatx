@@ -3,6 +3,40 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Fixed: bookings confirmed for the wrong year
+
+Founder manually tested booking via `/dashboard/test-chat` (Wallxer) and
+reported: "the AI said it's confirmed, but didn't find the booking in the
+calendar." The automated Phase 4 script had passed 12/12 the day before, so
+this needed a fresh look rather than assuming the script's coverage still
+held.
+
+**Root cause found by reading the actual conversation and cross-checking the
+real calendar (not just our own `bookings` table):** the booking was 100%
+real — a genuine event existed on Wallxer's connected Google Calendar with a
+working Meet link — but dated **2025-08-18**, over a year in the past. The
+visitor had said "18th August at 6PM Dhaka time" with no year. Claude had no
+way to know what today's actual date is (nothing in the system prompt told
+it), so it resolved the bare date to 2025 instead of 2026. The founder wasn't
+wrong that it "wasn't in the calendar" — it was, just parked somewhere nobody
+would think to look.
+
+**Fix:** `respond.ts` now prepends the real current date/time (`Date.now()`
+at request time, `toUTCString()`) to every system prompt, with an explicit
+instruction to resolve a bare date to its next upcoming occurrence, never the
+past.
+
+**Verified:** new regression script `scripts/verify-booking-date-fix.mjs`
+drives the same "bare date, no year" phrasing through the real `/api/chat`
+endpoint against Wallxer's real calendar and asserts the resulting booking's
+year matches the actual current year. **3/3 checks passed** after the fix
+(booking landed on 2026-09-05, not 2025). Cleans up its own test data
+(database row + real calendar event) afterward.
+
+**Cleanup:** with the founder's confirmation, the original test booking
+(Bappi Ahmed, 2025-08-18, event ID `rmbjkqt8e5fmeptndd8vp1s5kg`) was removed
+from both Wallxer's real calendar and the `bookings` table.
+
 ## 2026-08-17 — Phase 4: booking system (done)
 
 **Area:** Google Calendar OAuth, the four booking tools, real-calendar

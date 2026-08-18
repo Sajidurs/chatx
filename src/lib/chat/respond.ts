@@ -111,7 +111,14 @@ export async function respondToVisitorMessage(params: {
           .join("\n")}`
       : "";
 
-  const systemPrompt = (business.system_prompt || DEFAULT_SYSTEM_PROMPT) + knowledgeSection;
+  // Claude has no innate sense of "today" -- without this, a customer saying
+  // a bare date like "18th August" (no year) gets resolved against whatever
+  // date feels plausible from training, which can land in the past. This bit
+  // caused a real booking to be confirmed for 2025 instead of 2026.
+  const now = new Date();
+  const dateContext = `Current date and time: ${now.toUTCString()}. When a customer gives a date without a year (e.g. "August 18th"), assume the next upcoming occurrence of that date -- never a date in the past.`;
+
+  const systemPrompt = dateContext + "\n\n" + (business.system_prompt || DEFAULT_SYSTEM_PROMPT) + knowledgeSection;
 
   // --- Conversation history, oldest first, mapped to Claude's roles ---
   const { data: priorMessages } = await admin
