@@ -76,20 +76,29 @@ try {
   );
 
   // --- Widget's own internal styling survived the host's `all: unset` reset ---
-  const sendButtonBg = await frame.getByRole("button", { name: "Send" }).evaluate((el) => getComputedStyle(el).backgroundColor);
+  const startButtonBg = await frame.getByRole("button", { name: "Start chat" }).evaluate((el) => getComputedStyle(el).backgroundColor);
   check(
     "widget's own button styling (black background) is intact -- host's global reset never reached inside the iframe",
-    sendButtonBg === "rgb(0, 0, 0)",
-    sendButtonBg
+    startButtonBg === "rgb(0, 0, 0)",
+    startButtonBg
   );
 
-  // --- A real message round-trip through the actual chat pipeline ---
-  const input = frame.getByPlaceholder("Type a message...");
-  await input.fill("Hello, just checking the widget works");
-  await frame.getByRole("button", { name: "Send" }).click();
+  // --- A new visitor sees the lead intake form first, not an empty chat panel ---
+  await frame.getByPlaceholder("Your name").fill("Test Visitor");
+  await frame.getByPlaceholder("Your email").fill(`widget-test-${Date.now()}@mailinator.com`);
+  await frame.getByPlaceholder("How can we help?").fill("Hello, just checking the widget works");
+  await frame.getByRole("button", { name: "Start chat" }).click();
   await page.waitForTimeout(15000);
   const bubbleCount = await frame.locator("div.mr-auto, div.ml-auto").count();
-  check("a reply came back through the real /api/chat pipeline", bubbleCount >= 2, `bubble count: ${bubbleCount}`);
+  check("a reply came back through the real /api/chat pipeline, after the intake form", bubbleCount >= 2, `bubble count: ${bubbleCount}`);
+
+  // --- The normal chat input (post-intake) still works too ---
+  const input = frame.getByPlaceholder("Type a message...");
+  await input.fill("One more question");
+  await frame.getByRole("button", { name: "Send" }).click();
+  await page.waitForTimeout(15000);
+  const bubbleCountAfterSecond = await frame.locator("div.mr-auto, div.ml-auto").count();
+  check("a second message on the same conversation also gets a reply", bubbleCountAfterSecond > bubbleCount, `bubble count: ${bubbleCountAfterSecond}`);
 
   // --- Closing collapses the iframe back down ---
   await frame.getByRole("button", { name: "Close chat" }).click();
@@ -108,6 +117,7 @@ try {
     .gte("started_at", runStartedAt);
   for (const s of sessions || []) {
     await admin.from("chat_messages").delete().eq("session_id", s.id);
+    await admin.from("leads").delete().eq("session_id", s.id);
     await admin.from("chat_sessions").delete().eq("id", s.id);
   }
 }

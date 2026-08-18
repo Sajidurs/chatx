@@ -10,10 +10,12 @@ import {
   Users,
   CreditCard,
   UserCircle,
+  Contact,
 } from "lucide-react";
 
 export const MAIN_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: "/dashboard/leads", label: "Leads", icon: Contact },
   { href: "/dashboard/conversations", label: "Conversations", icon: MessagesSquare },
   { href: "/dashboard/bookings", label: "Bookings", icon: CalendarCheck },
 ];

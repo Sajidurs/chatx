@@ -17,12 +17,27 @@ export async function POST(request: Request) {
   const visitorId = typeof body.visitorId === "string" && body.visitorId ? body.visitorId : randomUUID();
   const sessionId = typeof body.sessionId === "string" ? body.sessionId : undefined;
 
+  // Optional: the widget's intake form sends both together exactly once, to
+  // start a conversation. Validated server-side too -- this is a public,
+  // unauthenticated endpoint, so the client's own form validation isn't
+  // something to rely on alone.
+  let lead: { name: string; email: string } | undefined;
+  if (typeof body.leadName === "string" && typeof body.leadEmail === "string") {
+    const name = body.leadName.trim();
+    const email = body.leadEmail.trim();
+    if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: "A valid name and email are required." }, { status: 400 });
+    }
+    lead = { name, email };
+  }
+
   try {
     const result = await respondToVisitorMessage({
       businessId: body.businessId,
       sessionId,
       visitorId,
       message: body.message,
+      lead,
     });
     return NextResponse.json({ ...result, visitorId });
   } catch (err) {

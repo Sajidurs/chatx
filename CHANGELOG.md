@@ -3,6 +3,80 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-18 — Lead capture before chat starts
+
+Founder asked for lead capture: a visitor gives their name, email, and an
+initial message before the chat actually starts, so the business can follow
+up later even if the AI couldn't fully help or the visitor never returns.
+Asked explicitly to check `system_design.md` and this changelog first and
+make sure it's scalable and doesn't break anything -- confirmed this isn't
+covered by (or in conflict with) the original spec; it's a genuinely new
+capability, distinct from the "lead scoring" differentiator already noted
+there as a future idea.
+
+**What was built:**
+
+- **`leads` table** (new migration): `business_id`, `session_id` (nullable,
+  set null if the session is ever deleted), `name`, `email`, `message`,
+  `created_at`. Same RLS pattern as `bookings` -- members can `select` their
+  own business's leads; all writes go through the service-role client from
+  the chat pipeline, same trust model as `chat_sessions`/`bookings`.
+- **The intake form gates the embed widget**: opening the bubble shows a
+  small form (name, email, message) instead of an empty chat panel. A
+  returning visitor (an existing session already in `localStorage`) skips
+  straight to the chat panel -- the form is only for starting a brand new
+  conversation, not shown again on every visit.
+- **One request does both jobs**: submitting the form calls the existing
+  `/api/chat` endpoint with `leadName`/`leadEmail` alongside the visitor's
+  first message, rather than a separate lead-creation round trip.
+  `respondToVisitorMessage` inserts the lead row (guarded against a
+  duplicate insert per session) and then proceeds through the exact same
+  pipeline as any other message -- quota enforcement, retrieval, booking/
+  handoff tools all apply identically, since a lead's first message is a
+  real message like any other.
+- **The AI is told the visitor's name/email on every turn**, not just the
+  one that submitted the form -- fetched fresh from the `leads` table each
+  time (by `session_id`), so it still knows the name on turn 5 of a
+  conversation, not only turn 1. Verified: asking "what's my name again?"
+  three turns in gets answered correctly.
+- **`/dashboard/leads`**: new page (and new "Leads" sidebar entry, in the
+  Main section alongside Conversations/Bookings) listing name, email,
+  message, received time, and a link to the full conversation when one
+  exists.
+- **Server-side email validation** on `/api/chat` -- `leadName`/`leadEmail`
+  are optional, but if either is present both are validated (non-empty name,
+  a real email shape) before ever reaching the database, since this is a
+  public, unauthenticated endpoint and the widget's own client-side
+  validation isn't something to trust alone.
+
+**Decisions made (not explicit in the request):**
+
+- **Scoped to the public embed widget only, not the dashboard's Test Chat
+  page.** Test Chat is the founder's own internal tool for trying out their
+  assistant, not a real visitor -- gating it behind a fake name/email every
+  time would add friction to the founder's own workflow for no real benefit.
+- **No per-business toggle to turn this off.** Not asked for, and the
+  request describes an unconditional flow ("the chat will ask for
+  name/email/message, then start the chat") -- adding configurability now
+  would be building for a requirement that hasn't been stated. Straightforward
+  to add later (a boolean column + a conditional in the widget) without
+  touching this design if the founder wants it.
+- **Message is required, not optional**, on the intake form -- the form's
+  purpose is to start the actual conversation, and an empty first message
+  would mean submitting the form does nothing visible until the visitor
+  types something anyway.
+
+**Verified end-to-end** with two real businesses (Playwright, real Claude +
+Voyage calls) via `scripts/verify-leads-feature.mjs`: **8/8 checks passed**.
+Confirmed the real intake form submission actually reaches the database with
+the right name/email/message, the lead is linked to a real `chat_session`,
+the AI correctly recalls the visitor's name on a later turn ("Your name is
+Priya Sharma!"), business B's owner cannot see business A's lead (RLS), and
+a returning visitor with an existing session skips the form. Re-ran the
+full existing regression suite (RLS, Phase 4 booking, Phase 6 dashboard,
+embed widget) to confirm nothing broke, since this touched the shared
+`respond.ts`/`/api/chat` pipeline every other feature also runs through.
+
 ## 2026-08-18 — Account/profile/password page, Manrope font, shared shell, real logo, and a real bug found in three existing pages
 
 Founder asked for four things at once: an account page (edit profile, change

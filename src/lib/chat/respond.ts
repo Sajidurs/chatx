@@ -24,6 +24,7 @@ export async function respondToVisitorMessage(params: {
   sessionId?: string;
   visitorId: string;
   message: string;
+  lead?: { name: string; email: string };
 }): Promise<RespondResult> {
   const admin = createAdminClient();
 
@@ -58,6 +59,27 @@ export async function respondToVisitorMessage(params: {
   // Non-null: the two blocks above guarantee sessionId is set by this point;
   // TS's control-flow narrowing doesn't carry that across the await points.
   const resolvedSessionId = sessionId!;
+
+  // Lead capture: the widget only sends `lead` once, on the intake form
+  // submission that starts the conversation -- guarded against duplicate
+  // inserts (a retried request, etc.) rather than trusting the client only
+  // ever sends it once.
+  if (params.lead) {
+    const { data: existingLead } = await admin
+      .from("leads")
+      .select("id")
+      .eq("session_id", resolvedSessionId)
+      .maybeSingle();
+    if (!existingLead) {
+      await admin.from("leads").insert({
+        business_id: params.businessId,
+        session_id: resolvedSessionId,
+        name: params.lead.name,
+        email: params.lead.email,
+        message: params.message,
+      });
+    }
+  }
 
   // Record the visitor's message regardless of quota/restriction outcome --
   // it's a real message that was sent, even if it doesn't get an AI reply.
@@ -120,7 +142,16 @@ export async function respondToVisitorMessage(params: {
   const now = new Date();
   const dateContext = `Current date and time: ${now.toUTCString()}. When a customer gives a date without a year (e.g. "August 18th"), assume the next upcoming occurrence of that date -- never a date in the past.`;
 
-  const systemPrompt = dateContext + "\n\n" + (business.system_prompt || DEFAULT_SYSTEM_PROMPT) + knowledgeSection;
+  // The intake form already collected the visitor's name/email before this
+  // conversation started -- fetched fresh each turn (not just read from
+  // params.lead) so the AI still knows it on turn 2, 3, etc., not only the
+  // turn that happened to submit it.
+  const { data: lead } = await admin.from("leads").select("name, email").eq("session_id", resolvedSessionId).maybeSingle();
+  const leadContext = lead
+    ? `The visitor already gave their name (${lead.name}) and email (${lead.email}) on an intake form before this conversation started -- feel free to address them by name, and don't ask for this again.`
+    : "";
+
+  const systemPrompt = [dateContext, leadContext, business.system_prompt || DEFAULT_SYSTEM_PROMPT].filter(Boolean).join("\n\n") + knowledgeSection;
 
   // --- Conversation history, oldest first, mapped to Claude's roles ---
   const { data: priorMessages } = await admin
