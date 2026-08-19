@@ -65,7 +65,11 @@ export function ConversationPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+      {/* Sticky so the take-over/hand-back control (and whose turn it is)
+          stays visible while scrolling through a long conversation -- the
+          dashboard's <main> is the actual scrolling container this sticks
+          within. */}
+      <div className="sticky top-0 z-10 flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-sm text-gray-600">
           {controlledBy === "human" ? (
             <>

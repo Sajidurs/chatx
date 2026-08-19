@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
-type Message = { role: "visitor" | "assistant" | "business" | "system"; content: string };
+type Message = { id?: string; role: "visitor" | "assistant" | "business" | "system"; content: string };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,6 +82,16 @@ export function EmbedWidget({
   const sessionIdRef = useRef<string | undefined>(undefined);
   const visitorIdRef = useRef<string | undefined>(undefined);
   const lastMessageAtRef = useRef<string | undefined>(undefined);
+  // A real customer hit this: an assistant reply could appear TWICE -- once
+  // from this turn's own direct response, and again moments later when a
+  // background poll tick landed before `lastMessageAtRef` had been advanced
+  // past it (a genuine race on a slow multi-chunk reply, not a fluke --
+  // confirmed only one row existed in the database, so the duplicate was
+  // purely a client-side render, not a double-send). Tracking every
+  // message's real id here, and never rendering the same id twice, removes
+  // the race entirely instead of trying to time the cursor update just
+  // right.
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -117,7 +127,10 @@ export function EmbedWidget({
       .then((res) => res.json())
       .then((data) => {
         if (data.messages?.length) {
-          setMessages(data.messages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })));
+          setMessages(
+            data.messages.map((m: { id: string; role: string; content: string }) => ({ id: m.id, role: m.role, content: m.content }))
+          );
+          for (const m of data.messages) if (m.id) seenMessageIdsRef.current.add(m.id);
           lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
         }
         setHumanControlled(data.controlledBy === "human");
@@ -169,16 +182,19 @@ export function EmbedWidget({
       if (!data) return;
       if (data.messages?.length) {
         // A visitor's own message is always already shown the instant they
-        // send it (optimistic update in sendMessage) -- if a poll tick
-        // happens to land while that request is still in flight, using a
-        // cursor from before it was sent, it would otherwise come back and
-        // render as a second, duplicate copy of what they just typed.
-        // Nothing about *their own* message ever legitimately needs to be
-        // discovered this way, only replies from elsewhere (the AI's or a
-        // human's), so those are the only roles polling needs to surface.
-        const newOnes = data.messages.filter((m: { role: string }) => m.role !== "visitor");
+        // send it (optimistic update in sendMessage), and never carries an
+        // id polling would recognize anyway, so it's excluded by role.
+        // Everything else is deduped by real id -- see seenMessageIdsRef's
+        // declaration for the duplicate-message bug this fixes.
+        const newOnes = data.messages.filter(
+          (m: { id: string; role: string }) => m.role !== "visitor" && !seenMessageIdsRef.current.has(m.id)
+        );
         if (newOnes.length) {
-          setMessages((prev) => [...prev, ...newOnes.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }))]);
+          for (const m of newOnes) seenMessageIdsRef.current.add(m.id);
+          setMessages((prev) => [
+            ...prev,
+            ...newOnes.map((m: { id: string; role: string; content: string }) => ({ id: m.id, role: m.role, content: m.content })),
+          ]);
           playNotificationSound();
         }
         lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
@@ -253,11 +269,19 @@ export function EmbedWidget({
         return;
       }
 
-      for (const reply of data.replies as { content: string; delayMs: number }[]) {
+      // Registered up front, before the typing-delay display loop below
+      // even starts -- these replies already exist in the database right
+      // now, so a poll tick landing anywhere during the next several
+      // seconds of simulated typing needs to already know to skip them.
+      for (const reply of data.replies as { id: string; content: string; delayMs: number }[]) {
+        if (reply.id) seenMessageIdsRef.current.add(reply.id);
+      }
+
+      for (const reply of data.replies as { id: string; content: string; delayMs: number }[]) {
         setTyping(true);
         await sleep(reply.delayMs);
         setTyping(false);
-        setMessages((prev) => [...prev, { role: "assistant", content: reply.content }]);
+        setMessages((prev) => [...prev, { id: reply.id, role: "assistant", content: reply.content }]);
       }
     } finally {
       setTyping(false);

@@ -3,6 +3,66 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-19 — Fixed: a human's reply could show up twice on the visitor's widget; made the take-over bar sticky
+
+Founder found a real duplicate-message bug testing live (screenshots showed
+"I've flagged this for our team..." and a follow-up reply both doubled on
+the widget), plus asked for the take-over/hand-back status bar to stay
+visible while scrolling a long conversation.
+
+**Duplicate messages -- confirmed real, root-caused, fixed.** Checked the
+database first before assuming anything: only ONE row ever existed for the
+duplicated text, so this was never a double-send -- it was the widget
+rendering the same message twice. Root cause: the widget shows a reply two
+different ways -- directly, the instant its own `/api/chat` response
+arrives (with a simulated per-chunk typing delay), and via a background
+poll every 4 seconds that picks up anything new since a timestamp cursor.
+The cursor was only updated once the *direct* display had already started,
+but a multi-chunk reply's typing-delay animation can take longer than one
+poll interval -- so a poll tick landing during that window would
+independently discover the same already-inserted row (using the stale
+cursor) and render it a second time. This never showed up in earlier
+testing because it needs a real gap between server-insert time and
+client-cursor-update time to manifest, which local dev (same machine, no
+real network latency) doesn't really have -- a real deployed widget with
+real round-trip latency hits it far more easily. Fixed properly: every
+message now carries its real database id end-to-end (`/api/chat`'s replies,
+`/api/chat/messages`'s poll results), and the widget tracks which ids it's
+already rendered, registering a reply's id *before* its typing-delay
+animation even starts. A poll landing mid-animation now recognizes the id
+and skips it -- no more racing a timestamp cursor against an unrelated
+animation delay.
+
+**Sticky take-over bar.** Added `sticky top-0 z-10` to the status bar in
+`conversation-panel.tsx` (the dashboard's own scrollable `<main>` is the
+container it sticks within). Confirmed working as an overlay header --
+scrolled content passes underneath it, which is the normal, expected way
+any sticky header behaves (verified the button stays visible and clickable
+at any scroll position, not that content stops appearing "behind" it, which
+isn't a bug).
+
+**Decisions made:** none beyond the fix itself -- a straightforward
+correctness bug and a straightforward CSS request.
+
+**Verified:**
+
+- `scripts/verify-duplicate-message-fix.mjs` (new) -- reproduces the exact
+  real-world shape (visitor's page left open and polling throughout, owner
+  takes over from a separate session, sends one reply) and confirms both the
+  AI's earlier reply and the human's reply each appear **exactly once** on
+  the visitor's widget, with the human's reply confirmed as a single
+  database row throughout. **4/4 passed, confirmed reliably repeatable**
+  (ran twice).
+- Directly reproduced the bug pre-fix (confirmed single DB row, duplicate
+  render) and confirmed it stopped after the fix, before writing the
+  permanent regression script.
+- Re-ran `verify-chat-fixes.mjs` (8/8) and `verify-phase6-dashboard.mjs`
+  (11/11) since `respond.ts`, the widget, and `/api/chat/messages` are all
+  shared code -- confirmed nothing regressed.
+- Full local `npm run build` passed clean.
+
+**Still incomplete / next step:** none for this item.
+
 ## 2026-08-19 — Fixed: AI seemed to ignore context after a human handed a conversation back
 
 Founder reported: after taking over as a human a few times, handing back to

@@ -13,7 +13,7 @@ const DEFAULT_SYSTEM_PROMPT =
 
 const MATCH_COUNT = 5;
 
-export type ChatReply = { content: string; delayMs: number };
+export type ChatReply = { id: string; content: string; delayMs: number };
 
 export type RespondResult =
   | { sessionId: string; blocked: true; blockedReason: string; replies: []; controlledBy: "ai" | "human" }
@@ -270,16 +270,26 @@ export async function respondToVisitorMessage(params: {
   const replyText = await generateReply({ systemPrompt, history, tools, executeTool });
   const chunksOut = splitIntoMessages(replyText);
 
+  // Returning each inserted row's real id (not just content) is what lets
+  // the widget dedupe against its own background poll -- see the matching
+  // note in embed-widget.tsx's sendMessage for the exact duplicate-message
+  // bug this fixes (a real customer hit it: an assistant reply shown once
+  // via this direct response, then a second time moments later when a poll
+  // tick landed before the client's timestamp-based "already seen" cursor
+  // had been updated -- a real race on a slow reply, not a clock issue).
+  let inserted: { id: string }[] = [];
   if (chunksOut.length > 0) {
-    await admin
+    const { data } = await admin
       .from("chat_messages")
-      .insert(chunksOut.map((content) => ({ session_id: resolvedSessionId, role: "assistant", content })));
+      .insert(chunksOut.map((content) => ({ session_id: resolvedSessionId, role: "assistant", content })))
+      .select("id");
+    inserted = data ?? [];
   }
 
   return {
     sessionId: resolvedSessionId,
     blocked: false,
-    replies: chunksOut.map((content) => ({ content, delayMs: computeTypingDelayMs(content) })),
+    replies: chunksOut.map((content, i) => ({ id: inserted[i]?.id ?? "", content, delayMs: computeTypingDelayMs(content) })),
     controlledBy,
   };
 }

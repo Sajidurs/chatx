@@ -28,7 +28,7 @@ export async function GET(request: Request) {
 
   let query = admin
     .from("chat_messages")
-    .select("role, content, created_at")
+    .select("id, role, content, created_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
   if (after) query = query.gt("created_at", after);
@@ -38,7 +38,11 @@ export async function GET(request: Request) {
   return NextResponse.json(
     {
       controlledBy: session.controlled_by,
-      messages: (messages ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })),
+      // `id` lets callers dedupe against messages they already rendered by
+      // some other path (e.g. the direct /api/chat response) instead of
+      // relying solely on a timestamp cursor -- see embed-widget.tsx's
+      // sendMessage for the exact duplicate-message bug that requires this.
+      messages: (messages ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, createdAt: m.created_at })),
     },
     { headers: { "Cache-Control": "no-store" } }
   );
