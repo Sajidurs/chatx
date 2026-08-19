@@ -1,8 +1,9 @@
 import Image from "next/image";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
-import { generateFromQuestionnaire, saveSystemPrompt, uploadAssistantPhoto } from "./actions";
+import { generateFromQuestionnaire, saveSystemPrompt, saveTimezone, uploadAssistantPhoto } from "./actions";
 import { PageHeader, Card } from "../ui";
 import { SavedBanner, ErrorBanner } from "../confirm-banners";
+import { TIMEZONES } from "@/lib/timezones";
 
 const inputClass =
   "rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100";
@@ -47,6 +48,29 @@ export default async function OnboardingPage() {
           )}
         </div>
         <p className="text-xs text-gray-500">PNG, JPEG, or WebP, up to 8MB. This section saves independently of the other two below.</p>
+      </Card>
+
+      <Card className="flex flex-col gap-3">
+        <h2 className="font-semibold">Timezone</h2>
+        <SavedBanner value="timezone">Timezone saved.</SavedBanner>
+        <p className="text-sm text-gray-500">
+          Your assistant uses this to understand times the way your customers mean them -- e.g. a customer saying &quot;10am&quot; with no timezone
+          means 10am here, not UTC -- and to make sure calendar bookings land at the right time on your Google Calendar.
+        </p>
+        <form action={saveTimezone} className="flex flex-wrap items-center gap-2">
+          <select name="timezone" defaultValue={business.timezone} disabled={!isOwner} className={inputClass}>
+            {TIMEZONES.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+          {isOwner && (
+            <button type="submit" className="rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600">
+              Save timezone
+            </button>
+          )}
+        </form>
       </Card>
 
       <Card className="flex flex-col gap-4">

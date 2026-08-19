@@ -14,6 +14,7 @@ type Business = {
   system_prompt: string | null;
   google_calendar_id: string | null;
   past_due_at: string | null;
+  timezone: string;
   created_at: string;
 };
 

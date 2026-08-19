@@ -7,6 +7,7 @@ import {
   deleteCalendarEvent,
   patchCalendarEvent,
 } from "@/lib/google/calendar";
+import { resolveToUtcIso } from "@/lib/timezones";
 
 export const BOOKING_TOOLS: Anthropic.Tool[] = [
   {
@@ -16,8 +17,16 @@ export const BOOKING_TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: {
-        start_date: { type: "string", description: "Start of the range to check, ISO 8601 datetime" },
-        end_date: { type: "string", description: "End of the range to check, ISO 8601 datetime" },
+        start_date: {
+          type: "string",
+          description:
+            "Start of the range to check, as the business's own LOCAL wall-clock date/time, ISO 8601 format WITHOUT a UTC offset or 'Z' suffix (e.g. \"2026-08-20T09:00:00\") -- the business's timezone is applied automatically, never assume or add an offset yourself.",
+        },
+        end_date: {
+          type: "string",
+          description:
+            "End of the range to check, same local-time-with-no-offset format as start_date (e.g. \"2026-08-20T17:00:00\").",
+        },
       },
       required: ["start_date", "end_date"],
     },
@@ -29,8 +38,15 @@ export const BOOKING_TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: {
-        start_time: { type: "string", description: "Meeting start time, ISO 8601 datetime" },
-        end_time: { type: "string", description: "Meeting end time, ISO 8601 datetime" },
+        start_time: {
+          type: "string",
+          description:
+            "Meeting start time, as the business's own LOCAL wall-clock date/time, ISO 8601 format WITHOUT a UTC offset or 'Z' suffix (e.g. \"2026-08-20T10:00:00\" for 10AM local) -- the business's timezone is applied automatically, never assume or add an offset yourself.",
+        },
+        end_time: {
+          type: "string",
+          description: "Meeting end time, same local-time-with-no-offset format as start_time.",
+        },
         customer_name: { type: "string", description: "The customer's name" },
         customer_contact: { type: "string", description: "The customer's email or phone number" },
       },
@@ -62,8 +78,15 @@ export const BOOKING_TOOLS: Anthropic.Tool[] = [
           type: "string",
           description: "The booking's ID, only if the customer explicitly provided one",
         },
-        new_start_time: { type: "string", description: "New start time, ISO 8601 datetime" },
-        new_end_time: { type: "string", description: "New end time, ISO 8601 datetime" },
+        new_start_time: {
+          type: "string",
+          description:
+            "New start time, as the business's own LOCAL wall-clock date/time, ISO 8601 format WITHOUT a UTC offset or 'Z' suffix -- the business's timezone is applied automatically, never assume or add an offset yourself.",
+        },
+        new_end_time: {
+          type: "string",
+          description: "New end time, same local-time-with-no-offset format as new_start_time.",
+        },
       },
       required: ["new_start_time", "new_end_time"],
     },
@@ -75,6 +98,7 @@ type BookingBusiness = {
   name: string;
   google_refresh_token: string;
   google_calendar_id: string;
+  timezone: string;
 };
 
 /**
@@ -128,6 +152,7 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
             calendarId: business.google_calendar_id,
             startIso: String(input.start_date),
             endIso: String(input.end_date),
+            timeZone: business.timezone,
           });
           return JSON.stringify({ busy });
         }
@@ -145,6 +170,7 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
             description: `Booked via ${business.name}'s chat assistant. Contact: ${customerContact}`,
             startIso,
             endIso,
+            timeZone: business.timezone,
             attendeeEmail: customerContact.includes("@") ? customerContact : undefined,
           });
 
@@ -156,8 +182,11 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
               google_event_id: eventId,
               customer_name: customerName,
               customer_contact: customerContact,
-              start_time: startIso,
-              end_time: endIso,
+              // Stored as a real UTC instant, not the bare local string --
+              // see resolveToUtcIso's doc comment for why a bare string can't
+              // go straight into a timestamptz column.
+              start_time: resolveToUtcIso(startIso, business.timezone),
+              end_time: resolveToUtcIso(endIso, business.timezone),
               status: "confirmed",
             })
             .select("id")
@@ -215,10 +244,15 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
             eventId: booking.google_event_id,
             startIso: newStartIso,
             endIso: newEndIso,
+            timeZone: business.timezone,
           });
           await admin
             .from("bookings")
-            .update({ start_time: newStartIso, end_time: newEndIso, status: "rescheduled" })
+            .update({
+              start_time: resolveToUtcIso(newStartIso, business.timezone),
+              end_time: resolveToUtcIso(newEndIso, business.timezone),
+              status: "rescheduled",
+            })
             .eq("id", bookingId)
             .eq("business_id", business.id);
           return JSON.stringify({ rescheduled: true, start_time: newStartIso, end_time: newEndIso });

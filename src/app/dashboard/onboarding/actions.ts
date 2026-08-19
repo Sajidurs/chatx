@@ -6,6 +6,7 @@ import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { generateSystemPrompt } from "@/lib/onboarding/generate-system-prompt";
+import { TIMEZONES } from "@/lib/timezones";
 
 function fail(message: string): never {
   redirect(`/dashboard/onboarding?error=${encodeURIComponent(message)}`);
@@ -15,7 +16,7 @@ function fail(message: string): never {
 // flag) so the page can say specifically what was saved -- three independent
 // forms sharing one vague "Saved." banner is exactly what caused confusion
 // about whether the photo had actually been saved when it hadn't.
-function saved(what: "persona" | "prompt" | "photo"): never {
+function saved(what: "persona" | "prompt" | "photo" | "timezone"): never {
   redirect(`/dashboard/onboarding?saved=${what}`);
 }
 
@@ -78,6 +79,21 @@ export async function saveSystemPrompt(formData: FormData) {
 
   if (error) fail("Could not save. Please try again.");
   saved("prompt");
+}
+
+export async function saveTimezone(formData: FormData) {
+  const context = await getCurrentBusinessContext();
+  if (!context) redirect("/login");
+  if (context.role !== "owner") fail("Only the business owner can edit assistant setup.");
+
+  const timezone = field(formData, "timezone");
+  if (!TIMEZONES.includes(timezone)) fail("Please choose a valid timezone from the list.");
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("businesses").update({ timezone }).eq("id", context.business.id);
+
+  if (error) fail("Could not save. Please try again.");
+  saved("timezone");
 }
 
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // 8MB -- raised from 5MB, which real photos/screenshots routinely exceed

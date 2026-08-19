@@ -30,7 +30,7 @@ export async function respondToVisitorMessage(params: {
 
   const { data: business } = await admin
     .from("businesses")
-    .select("id, name, plan, status, past_due_at, system_prompt, google_refresh_token, google_calendar_id")
+    .select("id, name, plan, status, past_due_at, system_prompt, google_refresh_token, google_calendar_id, timezone")
     .eq("id", params.businessId)
     .single();
 
@@ -152,8 +152,27 @@ export async function respondToVisitorMessage(params: {
   // a bare date like "18th August" (no year) gets resolved against whatever
   // date feels plausible from training, which can land in the past. This bit
   // caused a real booking to be confirmed for 2025 instead of 2026.
+  //
+  // Stated in the business's own local timezone, not UTC -- a customer near
+  // midnight in one direction or the other would otherwise see "today" shift
+  // by a day, and (the bigger bug this fixes) a bare customer-given time like
+  // "10AM" needs a timezone to be meaningful at all. The booking tools below
+  // are told to hand back local wall-clock times with no UTC offset for
+  // exactly this reason -- see resolveToUtcIso and calendar.ts's `timeZone`
+  // passthrough for how that's then turned into the right real instant.
   const now = new Date();
-  const dateContext = `Current date and time: ${now.toUTCString()}. When a customer gives a date without a year (e.g. "August 18th"), assume the next upcoming occurrence of that date -- never a date in the past.`;
+  const businessTimeZone = business.timezone || "UTC";
+  const localNow = new Intl.DateTimeFormat("en-US", {
+    timeZone: businessTimeZone,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(now);
+  const dateContext = `Current date and time where this business operates (timezone: ${businessTimeZone}): ${localNow}. When a customer gives a date without a year (e.g. "August 18th"), assume the next upcoming occurrence of that date -- never a date in the past. When a customer gives a bare time with no timezone mentioned (completely normal in a live chat -- e.g. "10AM" or "does 3pm work?"), assume they mean ${businessTimeZone} local time; never treat it as UTC. When calling check_availability, create_booking, or reschedule_booking, always give times as a LOCAL wall-clock date/time in ${businessTimeZone} WITHOUT any UTC offset or "Z" suffix (e.g. "2026-08-20T10:00:00", not "2026-08-20T10:00:00Z") -- the system applies ${businessTimeZone} automatically.`;
 
   // The intake form already collected the visitor's name/email before this
   // conversation started -- fetched fresh each turn (not just read from
@@ -196,6 +215,7 @@ export async function respondToVisitorMessage(params: {
           name: business.name,
           google_refresh_token: business.google_refresh_token!,
           google_calendar_id: business.google_calendar_id!,
+          timezone: businessTimeZone,
         },
         resolvedSessionId
       )

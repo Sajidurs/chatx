@@ -3,6 +3,94 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-19 — Fixed: bookings made with a bare time were treated as literal UTC
+
+Closes the "Known gaps" item logged 2026-08-18: a real Wallxer test booking
+where the visitor said "10AM" (no timezone -- how real customers actually
+talk) got booked 6 hours off, since nothing in the system knew the business's
+real local timezone.
+
+**What was built:**
+
+- `businesses.timezone` (text, defaults to `'UTC'` so no existing business's
+  behavior silently changes) -- new migration
+  `20260819000000_business_timezone.sql`, same column-level grant pattern as
+  the other owner-editable persona fields.
+- A new **Timezone** card on `/dashboard/onboarding`, a dropdown of every IANA
+  timezone name (`Intl.supportedValuesOf("timeZone")`, built into Node 18+ --
+  no timezone-data package needed), owner-only, same save-and-confirm pattern
+  as the existing persona/prompt forms.
+- `respond.ts`'s date context now states the current date/time in the
+  business's own timezone (not UTC), and explicitly tells Claude: when a
+  customer gives a bare time with no timezone, assume the business's local
+  time; when calling any booking tool, give times as a bare local wall-clock
+  string with **no** UTC offset or "Z" suffix.
+- `calendar.ts`'s `createCalendarEvent`/`patchCalendarEvent` now pass a
+  `timeZone` field alongside `start`/`end` -- this is what makes a bare local
+  string like `"2026-08-20T10:00:00"` actually mean 10AM in the business's own
+  timezone on the real Google Calendar, instead of being silently treated as
+  UTC (the original bug).
+- New `resolveToUtcIso(raw, timeZone)` helper (`src/lib/timezones.ts`):
+  converts a bare local wall-clock string into a real UTC instant (the
+  standard two-pass `Intl.DateTimeFormat` trick, since Node has no stable
+  Temporal API yet), or trusts an existing offset/"Z" as-is if Claude adds one
+  anyway. Used for our own `bookings.start_time`/`end_time` (`timestamptz`
+  columns) -- a bare string handed straight to Postgres would otherwise be
+  parsed in the *server's* session timezone, not the business's, which is the
+  exact same bug moved one layer down.
+
+**A second real bug found while verifying, fixed before it shipped:** Google's
+`freebusy.query` endpoint (used by `check_availability`) does **not** support
+a bare local datetime the way `events.insert`/`events.patch` do -- confirmed
+directly against the real API, a bare `timeMin`/`timeMax` with no offset is
+rejected outright with a 400, even with a sibling `timeZone` field set. Fixed
+by resolving `check_availability`'s times to a real UTC instant (via the same
+`resolveToUtcIso`) before calling Google, inside `calendar.ts`'s
+`checkAvailability` -- callers still just give the bare local time Claude
+produced.
+
+**Decisions made (not explicit in system_design.md):**
+
+- No check constraint validating `timezone` against Postgres's own
+  `pg_timezone_names` (a check constraint can't contain a subquery) --
+  validated instead at the application layer, against the same
+  `Intl.supportedValuesOf("timeZone")` list the dropdown is built from, so the
+  UI and the validation can never drift apart.
+- Did not add a timezone field to signup -- kept it in onboarding alongside
+  the other business-level assistant settings, where an owner can change it
+  any time. New businesses default to UTC until set.
+
+**Verified (real dev server, real Supabase, real Wallxer Google Calendar):**
+
+- `scripts/verify-booking-timezone-fix.mjs` (new) temporarily sets Wallxer's
+  timezone to Asia/Dhaka, books a real meeting with a bare "10AM" through the
+  real `/api/chat` endpoint, and confirms **both** the real Google Calendar
+  event and our own `bookings.start_time` land at 10AM Asia/Dhaka -- not 10AM
+  UTC -- then reschedules with another bare time ("3PM") and confirms the
+  same on both sides. Restores Wallxer's timezone afterward. **8/8 passed.**
+- `scripts/verify-timezone-setting.mjs` (new) drives the real onboarding page
+  as a real signed-in owner, saves a timezone, confirms the banner, confirms
+  it actually persisted to the database, and confirms it survives a reload.
+  **4/4 passed.**
+- Re-ran the full existing booking suite to confirm nothing regressed:
+  `verify-phase4-booking.mjs` (12/12) and `verify-booking-date-fix.mjs` (3/3)
+  both still pass unchanged (both scripts specify "UTC" explicitly in the
+  test conversation, and Wallxer's own timezone is still UTC by default, so
+  behavior for them is unaffected).
+- Along the way, found that Wallxer's real connected Google Calendar (the
+  founder's own, used since Phase 4) has a genuine recurring "Weekly Team
+  Meeting" event that spans roughly two full days every week (e.g.
+  2026-08-24 09:30 to 2026-08-26 10:15 Dhaka time) -- looks like an
+  unintentional multi-day recurrence rather than a single ~45-minute weekly
+  meeting. Not touched (real founder calendar data), just flagged here since
+  it collided with this round of testing twice and is worth a look next time
+  you're in that calendar.
+- Full local `npm run build` passed clean before this was considered done.
+
+**Still incomplete / next step:** none for this item -- the "Known gaps"
+entry from 2026-08-18 is removed below. Google OAuth app verification and the
+no-staging-environment gap remain open, tracked there.
+
 ## 2026-08-18 — Human takeover, and a real chat-history bug in the embed widget
 
 Founder reported two things after testing live: (1) no way to actually reply
@@ -1339,25 +1427,8 @@ below) rather than leaving it here stale.
   founder's own test-user email can connect a calendar right now. Needs
   Google's app verification process before any real business can connect
   their own calendar. Not needed until Phase 7 (public launch).
-- **No concept of a business's timezone anywhere in the system -- bookings
-  made with a bare, unqualified time are likely off by the business's real
-  UTC offset.** Found 2026-08-18: a real Wallxer test booking, visitor said
-  "date: 20 August, 10AM" (no timezone given, which is how real customers
-  will normally talk), Claude booked it as `2026-08-20T10:00:00+00:00` --
-  i.e. treated the bare "10AM" as UTC directly, zero conversion applied.
-  Wallxer's Google Calendar displays in Dhaka time (UTC+6), so the event
-  shows as 4:00 PM there instead of the intended 10:00 AM local -- a 6-hour
-  miss. `respond.ts`'s system prompt only ever states the current time in
-  UTC (added 2026-08-18 to fix the wrong-year bug, see that entry below);
-  it never had any business-local timezone to reason from, and
-  `src/lib/google/calendar.ts`'s `createCalendarEvent`/`patchCalendarEvent`
-  never send a `timeZone` field on the event either. Real fix needs: a
-  `businesses.timezone` column (set during onboarding), `respond.ts`'s date
-  context stating current time in *that* zone instead of only UTC, and
-  passing that same `timeZone` through to every Google Calendar API call so
-  the event both stores and displays correctly regardless of the calendar
-  owner's own account settings. Deferred at the founder's request --
-  logged here so it isn't lost, not fixed yet.
+- ~~No concept of a business's timezone anywhere in the system~~ -- **fixed
+  2026-08-19**, see that entry above.
 
 ## 2026-08-15 — Phase 0: Foundation (done)
 
