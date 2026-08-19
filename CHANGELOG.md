@@ -3,6 +3,85 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-19 — Fixed: AI seemed to ignore context after a human handed a conversation back
+
+Founder reported: after taking over as a human a few times, handing back to
+the AI would get replies that ignored what had actually been discussed.
+Reproduced directly (not guessed at) with a real conversation: business
+agent replies "Your tracking number is TRK-999888777" (or similar), hand
+back to the AI, ask it to repeat that back. Found **two separate real bugs**
+stacked on top of each other, both now fixed.
+
+**Bug 1 -- non-alternating history confuses Claude.** Both the AI's own
+replies and a human agent's replies are stored with different DB roles
+(`assistant` vs `business`) but both map to Claude's `"assistant"` role when
+building conversation history. Several business messages sent in a row with
+no visitor message between them (completely normal -- "let me check" / "found
+it" / "here's the answer") produced multiple **consecutive** `"assistant"`
+turns in the request to Claude. The API itself didn't reject this, but
+confirmed directly: Claude recalled a fact correctly when it was the *only*
+prior assistant turn, but reliably failed to recall the same fact once three
+consecutive assistant-role turns preceded it. Fixed in `respond.ts` by
+coalescing consecutive same-role turns into one (joined by newlines) before
+sending to Claude -- gives it the well-formed alternating structure it's
+actually trained on, with identical actual content.
+
+That alone didn't fully fix it -- even with clean alternating turns, Claude
+would sometimes still deflect ("I don't have that in front of me") right
+after a stretch of human-authored replies specifically. Nothing in the
+system prompt told it those earlier turns were trustworthy, already-said
+parts of *this* conversation rather than something to be freshly cautious
+about. Added an explicit instruction: earlier replies may have come from a
+team member instead of the AI itself, but everything already said in the
+conversation should be treated as established fact it can reference and
+repeat confidently.
+
+**Bug 2 -- a real reply-corruption bug, found while investigating, unrelated
+to handoff at all.** `splitIntoMessages` (`src/lib/chat/pacing.ts`) -- the
+function that splits a reply into separate chat bubbles -- used a regex
+(`[^.!?]+[.!?]*(\s+|$)`) that excluded periods from its "ordinary content"
+character class entirely. A decimal number not followed by whitespace (a
+price like "$45.00", a version like "2.0") has no valid way to be matched:
+the period can only be consumed as a sentence-ending terminator, and that
+requires whitespace or end-of-string right after it, which a mid-number
+period never has. The regex engine just kept advancing past whatever it
+couldn't match -- silently **dropping** that entire chunk of text. Confirmed
+directly: a reply saying "...your refund of $45.00 was processed..." came
+back to the visitor as "Your refund was 00." -- the model actually had the
+right answer, our own post-processing corrupted it before it ever reached
+the widget. This would have hit *any* reply mentioning a price, a version
+number, or similar -- nothing specific to human handoff, just more likely to
+surface right after it since that's when questions like "what was the
+number again?" naturally come up. Fixed the regex to only treat a
+terminator as a real sentence break when followed by whitespace or the end
+of the string (`[\s\S]+?[.!?](?=\s|$)|[\s\S]+$`).
+
+**Decisions made (not explicit in system_design.md):** none beyond the fixes
+themselves -- both are straightforward correctness bugs, not product
+direction calls.
+
+**Verified:**
+
+- Reproduced both bugs directly against the real dev server before fixing
+  anything (a garbled "$45.00" reply, a dropped tracking number after three
+  consecutive human replies), confirmed each fix resolves its case, using
+  properly Voyage-rate-limit-paced real `/api/chat` calls throughout.
+- `scripts/verify-pacing-split-fix.mjs` (new) -- unit-level check (imports
+  the real function directly via `node --experimental-strip-types`, no
+  server/DB/Claude needed): a price is preserved intact, a version number is
+  preserved intact, a reply with no trailing punctuation isn't dropped, a
+  short multi-sentence reply still groups into one bubble as designed
+  (confirmed that's not a regression -- `splitIntoMessages` intentionally
+  groups short sentences together up to 160 chars per bubble), and a longer
+  reply still does split into multiple bubbles once over that limit. **5/5
+  passed.**
+- Re-ran `verify-phase3-chat.mjs` (13/13) and `verify-chat-fixes.mjs` (8/8)
+  in full, since both `respond.ts` and `pacing.ts` are shared by every chat
+  turn regardless of feature -- confirmed nothing regressed.
+- Full local `npm run build` passed clean.
+
+**Still incomplete / next step:** none for this item.
+
 ## 2026-08-19 — Fixed five real bugs/gaps the founder found testing human takeover live, plus unread + sound
 
 Founder tested the human takeover feature live and reported five things.

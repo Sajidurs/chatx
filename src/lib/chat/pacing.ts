@@ -18,7 +18,15 @@ export function splitIntoMessages(text: string): string[] {
 
   const chunks: string[] = [];
   for (const paragraph of paragraphs) {
-    const sentences = paragraph.match(/[^.!?]+[.!?]*(\s+|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [
+    // A terminator (.!?) only ends a sentence when followed by whitespace or
+    // the end of the string -- found via a real reply that silently dropped
+    // "$45" entirely: the previous regex (`[^.!?]+[.!?]*(\s+|$)`) excluded
+    // periods from its "content" character class outright, so a decimal
+    // like "$45.00" (a period immediately followed by a digit, not
+    // whitespace) could never be consumed as ordinary text. The regex engine
+    // just kept advancing its start position looking for a split that
+    // worked, silently skipping everything it couldn't match through.
+    const sentences = paragraph.match(/[\s\S]+?[.!?](?=\s|$)|[\s\S]+$/g)?.map((s) => s.trim()).filter(Boolean) ?? [
       paragraph,
     ];
 
