@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Polled every few seconds for new messages -- must never be cached (by
+// Next.js, the browser, or an intermediate CDN), or a poll can keep getting
+// served a stale response indefinitely instead of hitting the database.
+export const dynamic = "force-dynamic";
+
 // Public, unauthenticated -- same trust model as /api/chat: a session ID is
 // an unguessable UUID, not proof of identity beyond "the same browser that
 // started this conversation." Polled by the widget while a human has taken
@@ -30,8 +35,11 @@ export async function GET(request: Request) {
 
   const { data: messages } = await query;
 
-  return NextResponse.json({
-    controlledBy: session.controlled_by,
-    messages: (messages ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })),
-  });
+  return NextResponse.json(
+    {
+      controlledBy: session.controlled_by,
+      messages: (messages ?? []).map((m) => ({ role: m.role, content: m.content, createdAt: m.created_at })),
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

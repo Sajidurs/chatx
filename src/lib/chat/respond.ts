@@ -89,9 +89,10 @@ export async function respondToVisitorMessage(params: {
   await admin
     .from("chat_messages")
     .insert({ session_id: resolvedSessionId, role: "visitor", content: params.message });
+  const nowIso = new Date().toISOString();
   await admin
     .from("chat_sessions")
-    .update({ last_message_at: new Date().toISOString() })
+    .update({ last_message_at: nowIso, last_visitor_message_at: nowIso })
     .eq("id", resolvedSessionId);
 
   // Billing restriction takes priority over the message quota -- a

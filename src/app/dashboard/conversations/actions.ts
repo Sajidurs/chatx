@@ -46,18 +46,36 @@ export async function handBackToAI(sessionId: string) {
   revalidatePath(`/dashboard/conversations/${sessionId}`);
 }
 
-export async function sendBusinessReply(formData: FormData) {
+// Called once when a conversation's detail page is actually opened in the
+// browser (not during a Next.js prefetch, which only fetches the RSC
+// payload and never mounts client effects) -- stamps how far the business
+// has "caught up," so the conversations list can tell an unread visitor
+// message apart from one already looked at.
+export async function markConversationSeen(sessionId: string) {
+  const context = await getCurrentBusinessContext();
+  if (!context) return;
+  const admin = await assertOwnedSession(context.business.id, sessionId);
+
+  await admin
+    .from("chat_sessions")
+    .update({ last_seen_by_business_at: new Date().toISOString() })
+    .eq("id", sessionId)
+    .eq("business_id", context.business.id);
+
+  revalidatePath("/dashboard/conversations");
+}
+
+export async function sendBusinessReply(sessionId: string, message: string) {
   const context = await getCurrentBusinessContext();
   if (!context) redirect("/login");
 
-  const sessionId = String(formData.get("sessionId") || "");
-  const message = String(formData.get("message") || "").trim();
+  const trimmed = message.trim();
   if (!sessionId) redirect("/dashboard/conversations");
-  if (!message) redirect(`/dashboard/conversations/${sessionId}`);
+  if (!trimmed) redirect(`/dashboard/conversations/${sessionId}`);
 
   const admin = await assertOwnedSession(context.business.id, sessionId);
 
-  await admin.from("chat_messages").insert({ session_id: sessionId, role: "business", content: message });
+  await admin.from("chat_messages").insert({ session_id: sessionId, role: "business", content: trimmed });
   await admin.from("chat_sessions").update({ last_message_at: new Date().toISOString() }).eq("id", sessionId).eq("business_id", context.business.id);
 
   revalidatePath(`/dashboard/conversations/${sessionId}`);

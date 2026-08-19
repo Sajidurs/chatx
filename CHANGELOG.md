@@ -3,6 +3,130 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-19 — Fixed five real bugs/gaps the founder found testing human takeover live, plus unread + sound
+
+Founder tested the human takeover feature live and reported five things.
+Investigated each on the real dev server rather than guessing from the code.
+
+**1. A reply sent from the dashboard while a human had taken over didn't
+show up on the widget until the visitor manually refreshed the page.**
+Real root cause, found by testing a *fresh* conversation without ever
+reloading (the existing regression script always reloaded first, which
+accidentally papered over this): the widget's polling effect depended on
+`open`/`leadCaptured`, but the session ID only becomes known asynchronously
+via a **ref** mutation (`sessionIdRef.current = ...`), which does not itself
+trigger a re-render -- so for a brand-new visitor's first conversation, the
+polling interval never actually started at all. It only ever looked "fixed"
+after a reload because a full remount re-runs the mount effect with the
+session ID already in hand. Fixed by adding a `sessionKnown` state twin that
+flips true exactly when the ref does, and keying the polling effect off that
+instead. Also hardened against a second, unrelated possible cause (a poll
+response being cached somewhere -- Vercel/CDN/browser) by adding
+`export const dynamic = "force-dynamic"` + `Cache-Control: no-store` to
+`/api/chat/messages`, and `cache: "no-store"` on every fetch to it -- cheap
+insurance even though the ref/state bug above was the real cause. Also added
+a `visibilitychange`/`focus` listener that polls immediately when the tab
+becomes active again, since browsers throttle `setInterval` hard in a
+backgrounded tab (exactly what happens when someone switches to a separate
+dashboard tab to reply as a human, which is the normal way to use this
+feature) -- belt-and-suspenders alongside the real fix.
+
+**2. Sending a reply from the dashboard felt slow.** Measured precisely with
+Playwright: 1796ms from click to the message appearing. Root cause: the
+optimistic UI update (`setMessages(...)`) was called *before* `startTransition`,
+which looks correct, but the whole handler was wired to `<form action={fn}>`
+-- passing a function to a form's `action` prop hands the entire handler to
+React's form-action machinery, which defers it until the pending
+transition/server round-trip resolves, rather than committing synchronously.
+Switched to a plain `onSubmit={(e) => { e.preventDefault(); ... }}` handler
+(the same pattern the widget's own send button already used correctly) and
+simplified `sendBusinessReply` to take plain `(sessionId, message)` args
+instead of `FormData` (no more need for the form-action wiring at all).
+Re-measured: 63-81ms.
+
+**3. The visitor couldn't type or send a follow-up while the AI was still
+replying to the previous message** (the input was `disabled={sending}`).
+Removing the disable outright isn't safe on its own -- the backend processes
+one message per request against shared conversation state (history,
+quota, tool calls), so two `/api/chat` calls in flight at once for the same
+session would race. Fixed with a small client-side queue instead: typing and
+hitting send is never blocked; if a send happens while one is already in
+flight, it's queued and dispatched automatically the moment the current one
+finishes. Requests still go out one at a time; nothing about typing does.
+
+**4. No way for the business to see which conversations have new visitor
+activity vs. already read.** New `chat_sessions.last_visitor_message_at` /
+`last_seen_by_business_at` columns (migration
+`20260820000000_conversation_unread_tracking.sql`, backfilled so existing
+conversations don't all retroactively show as unread the moment this
+ships). `last_visitor_message_at` is stamped only on a *visitor* message
+(not the business's own reply, so answering someone doesn't make their own
+conversation look unread to the business again) in `respond.ts`, alongside
+the existing `last_message_at`. `last_seen_by_business_at` is stamped by a
+new `markConversationSeen` action, called once from an effect the moment the
+conversation detail page actually mounts in a browser -- deliberately not
+done during the page's own server render, since a Next.js link prefetch
+only fetches the RSC payload and never runs client effects, so doing it
+there would mark something "seen" before anyone looked at it. The
+conversations list computes `unread = last_visitor_message_at >
+last_seen_by_business_at` per row and shows a small dot + bold visitor name.
+
+**5. Sound + minimize + close on the widget.** Clarified with the founder:
+just the sound, keep the existing minimize (the X button already collapses
+back to the bubble) and close behavior as-is. Added a short two-tone chime
+synthesized with the Web Audio API (no hosted audio file needed) that plays
+whenever a message arrives via polling -- deliberately not for the AI's
+direct reply to the visitor's own message (they're already looking right at
+it then), only for messages discovered independently, which is also
+specifically the scenario where a notification is actually useful. Polling
+itself was also extended to keep running while the panel is minimized (it
+previously stopped entirely when closed), which is what makes the sound
+able to fire while minimized at all.
+
+**Decisions made (not explicit in system_design.md):**
+
+- Unread tracking distinguishes "seen by the business" from the AI's own
+  `needs_handoff` flag -- they answer different questions (new customer
+  activity vs. "the AI explicitly got stuck") and both stay visible
+  independently on the conversations list.
+- The notification sound only fires for messages surfaced via polling, not
+  every single incoming message -- confirmed this reads as the intended
+  behavior (only "unprompted" messages need a sound; a direct reply to your
+  own just-sent message doesn't).
+
+**Verified (real dev server, real Supabase, real browser):**
+
+- `scripts/verify-chat-fixes.mjs` (new) -- drives a real fresh conversation
+  through the real widget with **zero reloads**, an admin takeover + reply,
+  and confirms all five fixes end-to-end in one flow: input stays enabled
+  and a queued follow-up actually sends while the AI is still replying to
+  the first message; the conversations list shows unread before the
+  conversation is opened and clears after; the admin's reply appears in
+  under 100ms; the visitor's still-open, never-reloaded page picks up the
+  reply via polling alone; a notification sound (`AudioContext`) fires when
+  it arrives; zero uncaught client-side errors throughout. **8/8 passed,
+  confirmed reliably repeatable (ran twice).**
+- Re-ran the full existing regression suite after these changes:
+  `verify-phase6-dashboard.mjs` (11/11, conversations list still renders and
+  RLS isolation is intact with the new columns selected).
+- `scripts/verify-takeover-and-history.mjs` (the older, narrower script this
+  session started from) intermittently failed while re-verifying -- root
+  cause confirmed to be `next dev`/Turbopack lazily recompiling a route and
+  pushing a Fast Refresh mid-request, which can drop an in-flight fetch's
+  continuation. This is purely a dev-server artifact (production has no
+  on-demand compilation or HMR at all) that got more likely to trigger after
+  a long day of many consecutive test runs against one long-running `next
+  dev` process, not a regression -- confirmed by reproducing the exact same
+  flow in isolation both with and without the timing collision. Added a
+  settle wait to that script as a mitigation, but `verify-chat-fixes.mjs`
+  above is the more reliable, more thorough replacement for validating this
+  flow going forward.
+
+**Still incomplete / next step:** none for these five items. Phase 7 (launch
+prep) and the Google OAuth verification process (see 2026-08-19 entry below
+about the redirect URI) remain the open next steps whenever the founder wants
+to pick them up.
+
 ## 2026-08-19 — Fixed: bookings made with a bare time were treated as literal UTC
 
 Closes the "Known gaps" item logged 2026-08-18: a real Wallxer test booking

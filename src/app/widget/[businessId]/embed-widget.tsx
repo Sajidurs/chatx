@@ -9,6 +9,34 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A short two-tone chime synthesized with the Web Audio API rather than a
+// hosted audio file -- one less asset to embed/host, and it works the same
+// wherever this widget is embedded. Lazily creates one AudioContext and
+// reuses it; browsers block audio until a real user gesture has happened on
+// the page, which is already guaranteed here (opening the chat is a click).
+let audioCtx: AudioContext | null = null;
+function playNotificationSound() {
+  try {
+    audioCtx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    [880, 1175].forEach((freq, i) => {
+      const osc = audioCtx!.createOscillator();
+      const gain = audioCtx!.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const start = now + i * 0.09;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.15, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.25);
+      osc.connect(gain).connect(audioCtx!.destination);
+      osc.start(start);
+      osc.stop(start + 0.26);
+    });
+  } catch {
+    // Autoplay/audio policy quirks shouldn't ever break the chat itself.
+  }
+}
+
 function postSizeToParent(el: HTMLElement) {
   const rect = el.getBoundingClientRect();
   window.parent.postMessage(
@@ -43,6 +71,14 @@ export function EmbedWidget({
   const [typing, setTyping] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [humanControlled, setHumanControlled] = useState(false);
+  // sessionIdRef flips from undefined to a real ID asynchronously (either
+  // after the history fetch below, or after a brand-new visitor's first
+  // message resolves in sendMessage) -- a plain ref mutation alone doesn't
+  // trigger a re-render, so the polling effect further down needs this
+  // state twin to actually notice and start once a session exists. Without
+  // it, a first-time visitor's polling never started at all (see the note
+  // by the poll effect for the exact bug this was).
+  const [sessionKnown, setSessionKnown] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const visitorIdRef = useRef<string | undefined>(undefined);
   const lastMessageAtRef = useRef<string | undefined>(undefined);
@@ -71,12 +107,13 @@ export function EmbedWidget({
     visitorIdRef.current = localStorage.getItem(`chatx_visitor_${businessId}`) || undefined;
     sessionIdRef.current = localStorage.getItem(`chatx_session_${businessId}`) || undefined;
     setLeadCaptured(!!sessionIdRef.current);
+    setSessionKnown(!!sessionIdRef.current);
 
     if (!sessionIdRef.current) {
       setHistoryLoaded(true);
       return;
     }
-    fetch(`/api/chat/messages?sessionId=${sessionIdRef.current}`)
+    fetch(`/api/chat/messages?sessionId=${sessionIdRef.current}`, { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (data.messages?.length) {
@@ -110,19 +147,23 @@ export function EmbedWidget({
     return () => observer.disconnect();
   }, [open, leadCaptured]);
 
-  // Poll for new messages whenever the panel is open, not only once we
-  // already know a human has taken over -- that state itself can only
+  // Poll for new messages as soon as a session exists, minimized or open --
+  // not gated on `open` (a ref flipping sessionIdRef.current doesn't
+  // re-render, so this effect keys off the `sessionKnown` state twin
+  // instead; see its declaration above for why that's necessary) or on
+  // already knowing a human has taken over -- that state itself can only
   // change while the visitor is just sitting there (an owner taking over
   // mid-conversation), so there's no "your own message's response told you"
-  // moment to hang the decision to start polling on. The interval is a
-  // little wasteful while the AI is answering normally (those replies
-  // already arrive synchronously), but it's the only way to reliably learn
-  // about a takeover the visitor didn't trigger themselves.
+  // moment to hang the decision to start polling on. Also what makes the
+  // notification sound work while minimized: with no polling while closed,
+  // there would be nothing to notice a new message with.
   useEffect(() => {
-    if (!open || !sessionIdRef.current) return;
-    const interval = setInterval(async () => {
+    if (!sessionKnown || !sessionIdRef.current) return;
+
+    async function poll() {
       const res = await fetch(
-        `/api/chat/messages?sessionId=${sessionIdRef.current}&after=${encodeURIComponent(lastMessageAtRef.current || "")}`
+        `/api/chat/messages?sessionId=${sessionIdRef.current}&after=${encodeURIComponent(lastMessageAtRef.current || "")}`,
+        { cache: "no-store" }
       );
       const data = await res.json().catch(() => null);
       if (!data) return;
@@ -136,16 +177,46 @@ export function EmbedWidget({
         // discovered this way, only replies from elsewhere (the AI's or a
         // human's), so those are the only roles polling needs to surface.
         const newOnes = data.messages.filter((m: { role: string }) => m.role !== "visitor");
-        if (newOnes.length) setMessages((prev) => [...prev, ...newOnes.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }))]);
+        if (newOnes.length) {
+          setMessages((prev) => [...prev, ...newOnes.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content }))]);
+          playNotificationSound();
+        }
         lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
       }
       setHumanControlled(data.controlledBy === "human");
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [open, leadCaptured]);
+    }
+
+    const interval = setInterval(poll, 4000);
+    // Browsers throttle setInterval heavily (sometimes to once a minute or
+    // less) in a background/inactive tab -- exactly what happens when a
+    // visitor leaves the widget's tab open and switches away, which is the
+    // normal way someone would be testing a human handoff from a separate
+    // dashboard tab. Without this, a reply sent while backgrounded could sit
+    // unseen for a long time, only appearing once something (like a manual
+    // refresh) forced a fresh fetch. Re-polling immediately the moment the
+    // tab becomes visible/focused again closes that gap.
+    function onVisibilityOrFocus() {
+      if (document.visibilityState === "visible") poll();
+    }
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    window.addEventListener("focus", onVisibilityOrFocus);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+    };
+  }, [sessionKnown]);
+
+  // A visitor typing (and even sending) a follow-up while the AI is still
+  // replying to the previous message shouldn't be blocked -- but the backend
+  // processes one message per request against shared conversation state, so
+  // a second /api/chat call firing while the first is still in flight would
+  // race on that state. Queueing client-side gets the best of both: nothing
+  // blocks typing or hitting send, requests still go out one at a time.
+  const pendingQueueRef = useRef<string[]>([]);
 
   async function sendMessage(text: string, lead?: { name: string; email: string }) {
-    if (!text || sending) return;
+    if (!text) return;
 
     setMessages((prev) => [...prev, { role: "visitor", content: text }]);
     setSending(true);
@@ -175,6 +246,7 @@ export function EmbedWidget({
       localStorage.setItem(`chatx_visitor_${businessId}`, data.visitorId);
       lastMessageAtRef.current = new Date().toISOString();
       setHumanControlled(data.controlledBy === "human");
+      setSessionKnown(true);
 
       if (data.blocked) {
         setMessages((prev) => [...prev, { role: "system", content: data.blockedReason }]);
@@ -190,13 +262,19 @@ export function EmbedWidget({
     } finally {
       setTyping(false);
       setSending(false);
+      const next = pendingQueueRef.current.shift();
+      if (next) sendMessage(next);
     }
   }
 
   async function send() {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text) return;
     setInput("");
+    if (sending) {
+      pendingQueueRef.current.push(text);
+      return;
+    }
     await sendMessage(text);
   }
 
@@ -352,11 +430,10 @@ export function EmbedWidget({
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Type a message..."
                 className="flex-1 rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
-                disabled={sending}
               />
               <button
                 type="submit"
-                disabled={sending || !input.trim()}
+                disabled={!input.trim()}
                 className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 Send

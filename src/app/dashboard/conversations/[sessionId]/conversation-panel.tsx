@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { takeOverConversation, handBackToAI, sendBusinessReply } from "../actions";
+import { takeOverConversation, handBackToAI, sendBusinessReply, markConversationSeen } from "../actions";
 
 type Message = { role: "visitor" | "assistant" | "business" | "system"; content: string; createdAt: string };
 
@@ -28,11 +28,21 @@ export function ConversationPanel({
   const lastMessageAtRef = useRef(initialMessages[initialMessages.length - 1]?.createdAt);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Marks this conversation caught-up as soon as it's actually opened in a
+  // browser -- an effect, not something done during the page's server
+  // render, since Next.js prefetching a link would otherwise mark a
+  // conversation "seen" before anyone actually looked at it.
+  useEffect(() => {
+    markConversationSeen(sessionId);
+  }, [sessionId]);
+
   // Poll for anything new (the visitor typing, or the AI replying if
   // control is still theirs) so this stays live without a manual refresh.
   useEffect(() => {
     const interval = setInterval(async () => {
-      const res = await fetch(`/api/chat/messages?sessionId=${sessionId}&after=${encodeURIComponent(lastMessageAtRef.current || "")}`);
+      const res = await fetch(`/api/chat/messages?sessionId=${sessionId}&after=${encodeURIComponent(lastMessageAtRef.current || "")}`, {
+        cache: "no-store",
+      });
       const data = await res.json().catch(() => null);
       if (!data?.messages?.length) {
         if (data?.controlledBy) setControlledBy(data.controlledBy);
@@ -100,17 +110,23 @@ export function ConversationPanel({
 
       {controlledBy === "human" && (
         <form
-          action={(formData) => {
-            const text = String(formData.get("message") || "").trim();
+          onSubmit={(e) => {
+            e.preventDefault();
+            const text = reply.trim();
             if (!text) return;
+            // A plain onSubmit handler, not <form action={fn}> -- passing a
+            // function to action defers the whole handler (including this
+            // optimistic update) until React's form-action machinery
+            // resolves it, which in practice meant the bubble didn't appear
+            // until the server round-trip finished (~1.8s measured), not
+            // instantly. A regular event handler commits this synchronously.
             setMessages((prev) => [...prev, { role: "business", content: text, createdAt: new Date().toISOString() }]);
             lastMessageAtRef.current = new Date().toISOString();
             setReply("");
-            startTransition(() => sendBusinessReply(formData));
+            startTransition(() => sendBusinessReply(sessionId, text));
           }}
           className="flex gap-2 rounded-2xl border border-gray-100 bg-white p-3 shadow-sm"
         >
-          <input type="hidden" name="sessionId" value={sessionId} />
           <input
             name="message"
             value={reply}

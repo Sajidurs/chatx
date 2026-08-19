@@ -44,16 +44,36 @@ try {
   const visitorPage = await browser.newPage();
   await visitorPage.goto(`${BASE_URL}/widget/${bizId}`);
   await visitorPage.waitForLoadState("networkidle");
+  // next dev/Turbopack lazily (re)compiles a route on its first hit after
+  // being idle, and pushes an HMR "Fast Refresh" to the page when it does --
+  // if that lands while the intake form's /api/chat request is in flight, it
+  // can drop that request's continuation entirely (confirmed directly: the
+  // exact same flow with this settle wait removed intermittently left
+  // localStorage never populated, with a stray "[Fast Refresh] rebuilding"
+  // in the console at the same moment). Production has no on-demand
+  // compilation or HMR at all, so this is purely a dev-server test
+  // artifact -- letting it settle here avoids racing it.
+  await sleep(4000);
   await visitorPage.getByRole("button", { name: "Open chat" }).click();
   await visitorPage.getByPlaceholder("Your name").fill("Chris Diaz");
   await visitorPage.getByPlaceholder("Your email").fill(`chris-${stamp}@mailinator.com`);
   await visitorPage.getByPlaceholder("How can we help?").fill("I need help with a refund on my last order.");
   await visitorPage.getByRole("button", { name: "Start chat" }).click();
-  await visitorPage.waitForTimeout(9000);
-
-  const { data: lead } = await admin.from("leads").select("session_id").eq("business_id", bizId).single();
+  // A fixed wait here raced the real Claude+Voyage round trip (measured
+  // 8.4s just now, right against a 9s margin) -- poll for the actual DB
+  // effect instead of guessing a duration.
+  let lead = null;
+  for (let i = 0; i < 20 && !lead; i++) {
+    await sleep(1000);
+    ({ data: lead } = await admin.from("leads").select("session_id").eq("business_id", bizId).maybeSingle());
+  }
+  if (!lead) throw new Error("Lead was never created -- the intake form submission itself failed.");
   const sessionId = lead.session_id;
   cleanupSessionIds.push(sessionId);
+  // The leads row is written early in the same request the widget is still
+  // awaiting -- give the client's own fetch a moment to actually resolve
+  // and write localStorage before reloading out from under it.
+  await sleep(2000);
 
   // --- Refresh check: does the visible history survive a real reload? ---
   await visitorPage.reload();
