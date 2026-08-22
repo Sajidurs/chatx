@@ -3,6 +3,52 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-22 — Connected app.falahchat.com; switched Google Calendar to the new domain
+
+The founder wants `falahchat.com` (a real, existing, separate marketing site
+-- confirmed with the founder it's already what they want, no landing page
+build needed) for the main sales site, and `app.falahchat.com` for the
+actual product. The founder added the domain in the chatx project's Vercel
+settings and the corresponding DNS record themselves (both outside this
+repo/this agent's access -- Vercel domain ownership and DNS are account-
+level actions, not something doable from here). Verified end-to-end rather
+than taken on faith:
+
+- `https://app.falahchat.com` genuinely serves this app (home, `/privacy`,
+  `/login` all real 200s, not a placeholder) -- confirmed via `vercel
+  inspect` that the alias is real on Vercel's side (not just a CLI display
+  artifact, which the first check briefly looked like when the domain
+  timed out immediately after being added -- DNS/cert provisioning just
+  hadn't finished propagating yet; a retry a few minutes later succeeded).
+- A real `/api/chat` call against `https://app.falahchat.com` returns a
+  real Claude reply -- the whole backend works identically on the new
+  domain, not just static pages.
+- The founder had *also* already added
+  `https://app.falahchat.com/api/google/callback` as a second Authorized
+  redirect URI in Google Cloud Console (alongside the existing
+  `chatx-rust.vercel.app` one) -- confirmed by generating a real Google
+  OAuth URL with that redirect and hitting it directly: real sign-in page,
+  no `redirect_uri_mismatch`.
+- With that confirmed, switched `GOOGLE_REDIRECT_URI` on Vercel production
+  from the old `chatx-rust.vercel.app` value to
+  `https://app.falahchat.com/api/google/callback` and redeployed --
+  "Connect Google Calendar" now genuinely completes against the new domain
+  end-to-end (real owner login, real click, real Google sign-in page,
+  verified live, not just that the env var changed).
+
+**Decisions made (not explicit in system_design.md):** none -- this was
+entirely the founder's own domain/DNS/Google-Console actions; this agent's
+role was verifying each step actually worked and making the one in-app
+config change (the redirect URI env var) once it was safe to.
+
+**Still incomplete / next step:** `chatx-rust.vercel.app` is left working
+as a secondary alias (harmless, no reason to remove it) -- `app.falahchat.com`
+is now the primary. The Google OAuth *verification* process itself (letting
+real customers, not just the founder's test account, connect their own
+calendar -- see the 2026-08-20 entry) is still separately pending; when
+submitting that, use the `app.falahchat.com` URLs now that it's the real
+domain, not the `chatx-rust.vercel.app` ones.
+
 ## 2026-08-22 — Hid human handoff and Team for launch; fixed a side-effect on AI phrasing
 
 Founder wants to launch with fewer, solidly-working features rather than
