@@ -3,6 +3,65 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-20 — Fixed the Google Calendar redirect URI; added privacy policy/terms pages toward OAuth verification
+
+**Redirect URI mismatch, fixed by the founder.** The `redirect_uri_mismatch`
+error blocking "Connect Google Calendar" on production (logged 2026-08-19)
+is resolved -- the founder added `https://chatx-rust.vercel.app/api/google/callback`
+to the OAuth client's Authorized redirect URIs in Google Cloud Console.
+Verified directly: the connect flow now reaches Google's real sign-in
+screen instead of erroring. Also discussed the eventual custom domain
+(`app.falahchat.com`, not yet purchased/connected to Vercel) -- Google
+allows multiple redirect URIs on one client, so that one gets added
+alongside this one once the domain is actually live, not instead of it.
+
+**Built toward Google's app verification -- the other blocker for letting
+real customers (not just the founder's own test account) connect their own
+calendar.** That process needs a public homepage and a privacy policy URL,
+neither of which existed:
+
+- `src/app/privacy/page.tsx` and `src/app/terms/page.tsx` (new) -- written to
+  accurately describe what the system actually does and actually collects
+  (chat transcripts, lead/booking contact info, an encrypted Google
+  Calendar token, which named subprocessors -- Anthropic, Voyage, Google,
+  Stripe, Resend, Supabase, Vercel -- process what), not a generic
+  boilerplate template. Explicitly honest about what's *not* built yet
+  (no self-service data export/deletion -- handled as a manual request via
+  email for now) rather than overclaiming a compliance posture the product
+  doesn't actually have.
+- `src/app/page.tsx` -- replaced the placeholder "chatx" homepage with real
+  Falah Chat branding (logo, name) and a footer linking to both new pages --
+  Google's verification review checks that the app's homepage identifies it
+  and links to its privacy policy.
+- `src/app/layout.tsx` -- root metadata was still the literal default
+  `"Create Next App"` title from scaffolding; fixed to "Falah Chat" (found
+  while fixing the homepage, unrelated to OAuth but a real oversight worth
+  closing along the way).
+
+**Decisions made (not explicit in system_design.md):**
+
+- Privacy contact listed as the founder's own email (`SRahman@my-boost.ca`)
+  and "Falah Chat" as the named business, rather than a distinct registered
+  legal entity -- founder confirmed this is fine for now.
+- Data deletion is described as a manual, request-based process rather than
+  a self-service dashboard feature, because that's what's actually built.
+  Worth revisiting if a real self-service export/delete feature gets built
+  later -- update the policy to match at that point, not before.
+
+**Still incomplete / next step:**
+
+- The privacy/terms pages and redirect URI fix are both live, but the OAuth
+  consent screen itself still needs to be submitted for Google's
+  verification review from the founder's own Google Cloud Console (this
+  requires their login; not something doable on their behalf) -- filling in
+  the app homepage URL, the new privacy policy URL, a scope justification
+  for the Calendar scope, and submitting. Typical review turnaround for this
+  scope tier is days to a couple of weeks, not instant.
+- Once verification is granted and the consent screen moves to "In
+  production," any real customer (not just the founder's own test-user
+  account) will be able to connect their own Google Calendar. Until then,
+  this remains the Known Gap logged 2026-08-15/17.
+
 ## 2026-08-19 — Fixed: a human's reply could show up twice on the visitor's widget; made the take-over bar sticky
 
 Founder found a real duplicate-message bug testing live (screenshots showed
