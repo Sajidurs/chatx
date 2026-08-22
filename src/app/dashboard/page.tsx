@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, MessagesSquare, CalendarCheck, Gauge } from "lucide-react";
+import { ArrowUpRight, MessagesSquare, CalendarCheck, Contact } from "lucide-react";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { isBusinessRestricted } from "@/lib/billing/access";
 import { createClient } from "@/lib/supabase/server";
@@ -43,7 +43,7 @@ export default async function DashboardPage({
     { data: planLimit },
     { count: totalConversations },
     { count: totalBookings },
-    { count: needsHandoffCount },
+    { count: totalLeads },
     { data: nextBooking },
     { data: recentBookings },
   ] = await Promise.all([
@@ -51,11 +51,7 @@ export default async function DashboardPage({
     supabase.from("plan_limits").select("monthly_messages").eq("plan", business.plan).single(),
     supabase.from("chat_sessions").select("id", { count: "exact", head: true }).eq("business_id", business.id),
     supabase.from("bookings").select("id", { count: "exact", head: true }).eq("business_id", business.id),
-    supabase
-      .from("chat_sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("business_id", business.id)
-      .eq("needs_handoff", true),
+    supabase.from("leads").select("id", { count: "exact", head: true }).eq("business_id", business.id),
     supabase
       .from("bookings")
       .select("customer_name, start_time")
@@ -84,11 +80,6 @@ export default async function DashboardPage({
   const monthlyLimit = planLimit?.monthly_messages ?? null;
   const usagePercent = monthlyLimit ? Math.min(100, (messagesThisMonth / monthlyLimit) * 100) : 0;
   const momChange = messagesLastMonth > 0 ? Math.round(((messagesThisMonth - messagesLastMonth) / messagesLastMonth) * 100) : null;
-
-  const resolutionRate =
-    totalConversations && totalConversations > 0
-      ? Math.round(((totalConversations - (needsHandoffCount ?? 0)) / totalConversations) * 100)
-      : 100;
 
   return (
     <div className="flex flex-col gap-6">
@@ -134,14 +125,14 @@ export default async function DashboardPage({
         />
         <StatCard
           bg="bg-brand-50"
-          label="Resolution rate"
-          value={`${resolutionRate}%`}
-          href="/dashboard/conversations"
-          icon={<Gauge className="h-5 w-5" />}
+          label="Leads"
+          value={totalLeads ?? 0}
+          href="/dashboard/leads"
+          icon={<Contact className="h-5 w-5" />}
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="flex flex-col justify-between rounded-2xl bg-gray-900 p-6 text-white shadow-sm">
           <div>
             <p className="text-3xl font-semibold">
@@ -161,16 +152,6 @@ export default async function DashboardPage({
           >
             {momChange === null ? "No data from last month yet" : momChange >= 0 ? `+${momChange}% vs last month` : `${momChange}% vs last month`}
           </span>
-        </div>
-
-        <div className="flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-          <div>
-            <p className="text-3xl font-semibold">{needsHandoffCount ?? 0}</p>
-            <p className="text-sm text-gray-500">Conversations needing you</p>
-          </div>
-          <Link href="/dashboard/conversations" className="mt-4 text-xs font-medium text-brand-700 hover:underline">
-            View conversations &rarr;
-          </Link>
         </div>
 
         {business.plan !== "pro" ? (
@@ -207,15 +188,15 @@ export default async function DashboardPage({
         <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <p className="mb-4 text-sm font-semibold">Highlights</p>
           <div className="flex flex-col gap-4">
-            {(needsHandoffCount ?? 0) > 0 ? (
+            {(totalLeads ?? 0) > 0 ? (
               <HighlightCard
-                tone="warning"
-                title="Needs your attention"
-                description={`${needsHandoffCount} conversation${needsHandoffCount === 1 ? "" : "s"} the AI couldn't resolve on its own.`}
-                href="/dashboard/conversations"
+                tone="good"
+                title="Leads captured"
+                description={`${totalLeads} lead${totalLeads === 1 ? "" : "s"} collected so far.`}
+                href="/dashboard/leads"
               />
             ) : (
-              <HighlightCard tone="good" title="All caught up" description="No conversations currently need your attention." href="/dashboard/conversations" />
+              <HighlightCard tone="info" title="No leads yet" description="Leads collected from your chat's intake form will show up here." href="/dashboard/leads" />
             )}
 
             {monthlyLimit && (

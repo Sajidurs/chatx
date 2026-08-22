@@ -17,7 +17,7 @@ export default async function ConversationDetailPage({
   const supabase = await createClient();
   const { data: session } = await supabase
     .from("chat_sessions")
-    .select("id, visitor_id, started_at, needs_handoff, handoff_reason, controlled_by")
+    .select("id, visitor_id, started_at")
     .eq("id", sessionId)
     .eq("business_id", context.business.id)
     .single();
@@ -42,16 +42,8 @@ export default async function ConversationDetailPage({
         <p className="text-sm text-gray-500">Started {new Date(session.started_at).toLocaleString()}</p>
       </div>
 
-      {session.needs_handoff && (
-        <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-          <p className="font-medium">This conversation was flagged for your attention.</p>
-          <p>{session.handoff_reason}</p>
-        </div>
-      )}
-
       <ConversationPanel
         sessionId={sessionId}
-        initialControlledBy={session.controlled_by}
         initialMessages={(messages ?? []).map((m) => ({
           role: m.role as "visitor" | "assistant" | "business",
           content: m.content,

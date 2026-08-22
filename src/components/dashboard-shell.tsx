@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Bell } from "lucide-react";
 import { SidebarNav } from "@/app/dashboard/sidebar-nav";
 import { CommandSearch } from "@/app/dashboard/command-search";
 import { LogoMark } from "@/app/dashboard/logo-mark";
@@ -13,14 +12,12 @@ import { PageTransition } from "@/app/dashboard/page-transition";
 export function DashboardShell({
   businessName,
   role,
-  needsHandoffCount,
   userInitials,
   userAvatarUrl,
   children,
 }: {
   businessName: string;
   role: string;
-  needsHandoffCount: number;
   userInitials: string;
   userAvatarUrl?: string | null;
   children: React.ReactNode;
@@ -54,18 +51,6 @@ export function DashboardShell({
                 <p className="text-sm font-semibold leading-tight">{businessName}</p>
                 <p className="text-xs capitalize leading-tight text-gray-400">{role}</p>
               </div>
-              <Link
-                href="/dashboard/conversations"
-                className="relative rounded-full p-2 text-gray-500 hover:bg-gray-100"
-                aria-label="Conversations needing attention"
-              >
-                <Bell className="h-5 w-5" />
-                {needsHandoffCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white">
-                    {needsHandoffCount}
-                  </span>
-                )}
-              </Link>
               <Link
                 href="/dashboard/account"
                 aria-label="Your account"

@@ -1,8 +1,11 @@
-// Phase 6 verification: conversation history, booking list, usage
-// analytics, and human handoff -- driven against the real dev server with
-// two real businesses, to also confirm RLS isolation (one owner can never
-// see another business's conversations/bookings), per system_design.md's
-// Phase 6 definition of done.
+// Phase 6 verification: conversation history, booking list, and usage
+// analytics -- driven against the real dev server with two real businesses,
+// to also confirm RLS isolation (one owner can never see another business's
+// conversations/bookings), per system_design.md's Phase 6 definition of
+// done. Human handoff (AI auto-flagging + manual take-over) was hidden for
+// launch -- see the 2026-08-20 changelog entry -- so this also confirms
+// that removal actually took: a genuinely frustrated message no longer
+// gets flagged, and no "Needs your help" badge exists anywhere to show.
 //
 // Usage: node --env-file=.env.local scripts/verify-phase6-dashboard.mjs
 // Requires: npm run dev already running on http://localhost:3000.
@@ -85,9 +88,10 @@ try {
   cleanupSessionIds.push(bSession.id);
   await admin.from("chat_messages").insert({ session_id: bSession.id, role: "visitor", content: "Business B's own secret conversation" });
 
-  // --- A real conversation through the real pipeline, designed to trigger
-  // human handoff (business A has no booking tools -- confirms handoff
-  // works independent of the booking feature) ---
+  // --- A real conversation through the real pipeline with a genuinely
+  // frustrated message -- this used to trigger human handoff; now confirms
+  // that removal actually took (the AI has no handoff tool to call at all,
+  // so this should never get flagged, regardless of how the AI responds) ---
   const handoffRes = await fetch(`${BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -98,7 +102,7 @@ try {
     }),
   });
   const handoffBody = await handoffRes.json();
-  console.log("  handoff-triggering reply:", (handoffBody.replies || []).map((r) => r.content).join(" / "));
+  console.log("  reply to a frustrated message:", (handoffBody.replies || []).map((r) => r.content).join(" / "));
   cleanupSessionIds.push(handoffBody.sessionId);
 
   await sleep(2000);
@@ -108,8 +112,8 @@ try {
     .eq("id", handoffBody.sessionId)
     .single();
   check(
-    "a genuinely frustrated visitor gets flagged for human handoff (works without booking tools)",
-    flaggedSession?.needs_handoff === true && !!flaggedSession?.handoff_reason,
+    "human handoff is hidden -- even a genuinely frustrated visitor is never flagged",
+    flaggedSession?.needs_handoff === false && !flaggedSession?.handoff_reason,
     JSON.stringify(flaggedSession)
   );
 
@@ -129,17 +133,18 @@ try {
   check("dashboard shows the exact seeded message count (7) from usage_logs", dashboardText.includes("7"), "expected '7' somewhere on the page");
   check("dashboard shows the seeded booking in the Bookings stat card", /Bookings[\s\S]{0,20}1/.test(dashboardText), dashboardText.slice(0, 50));
 
-  // --- Conversations list shows A's own conversations, including the flag ---
+  // --- Conversations list shows A's own conversations ---
   await page.goto(`${BASE_URL}/dashboard/conversations`);
   const convoListText = await page.textContent("body");
   check("conversations list shows the seeded visitor", convoListText.includes("11111111"), null);
-  check("conversations list shows the handoff badge", convoListText.includes("Needs your help"), null);
+  check("no handoff badge appears anywhere on the conversations list", !convoListText.includes("Needs your help"), null);
   check("conversations list does NOT show business B's visitor", !convoListText.includes("22222222"), null);
 
-  // --- Conversation detail shows the real message thread ---
+  // --- Conversation detail shows the real message thread, read-only ---
   await page.goto(`${BASE_URL}/dashboard/conversations/${seededSession.id}`);
   const detailText = await page.textContent("body");
   check("conversation detail shows the real seeded message", detailText.includes("size guide"), null);
+  check("no take-over/hand-back control exists on the conversation detail page", !/Take over|Hand back to AI/.test(detailText), null);
 
   // --- RLS isolation: owner A cannot view business B's conversation by ID ---
   // Note: this route has a loading.tsx (streaming), so Next.js sends the 200
@@ -189,4 +194,4 @@ if (failed.length > 0) {
   console.error("PHASE 6 DASHBOARD VERIFICATION FAILED");
   process.exit(1);
 }
-console.log("Phase 6 dashboard verified: conversations, bookings, usage analytics, and human handoff all work, with RLS isolation intact.");
+console.log("Phase 6 dashboard verified: conversations, bookings, and usage analytics all work with RLS isolation intact, and human handoff is confirmed hidden.");

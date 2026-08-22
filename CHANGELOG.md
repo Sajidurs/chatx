@@ -3,6 +3,121 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-22 — Hid human handoff and Team for launch; fixed a side-effect on AI phrasing
+
+Founder wants to launch with fewer, solidly-working features rather than
+everything built so far: "we don't need human handover or Team for now, we
+will add these later if needed." Both are **hidden, not deleted** -- every
+line of the actual implementation (dashboard UI, server actions, the
+`flag_for_human_handoff` tool, the invite flow, all migrations/schema) is
+untouched and still in the codebase; re-enabling later is restoring a few
+lines, not rebuilding.
+
+**Human handoff (both halves) hidden:**
+
+- The AI's own escalation tool: `respond.ts` no longer includes
+  `HANDOFF_TOOL` in the tools it offers Claude, so it can never call
+  `flag_for_human_handoff` -- the tool definition and its executor
+  (`src/lib/ai/handoff-tool.ts`) are untouched, just never wired in.
+- Manual take-over: `ConversationPanel` (the conversation detail page) was
+  rewritten to a plain read-only, polling message view -- no "Take
+  over"/"Hand back to AI" buttons, no reply-as-yourself form. The dashboard
+  no longer shows the orange "Needs your help" badge (conversations list),
+  the "flagged for your attention" banner (conversation detail), the
+  notification bell badge, or the "Conversations needing you" tile and
+  handoff-driven Highlights card on the dashboard home -- replaced the
+  latter two with a **Leads** stat card and a "Leads captured" highlight
+  instead of leaving a permanent zero/empty state once flagging can never
+  happen again.
+- `respond.ts`'s own `controlled_by` handling (the human-controlled
+  short-circuit, the consecutive-role coalescing, `handoffContinuityContext`)
+  is deliberately **left alone** -- `controlled_by` can now never become
+  `'human'` since nothing sets it, so that code is inert dead-branches, not
+  a risk. The role-coalescing logic in particular still matters for a
+  completely unrelated reason (a single AI turn's own multi-bubble reply is
+  already consecutive same-role rows) and must not be removed.
+
+**A real side effect caught while verifying, fixed:** without the handoff
+tool, the AI would still *say* things like "I'll flag this for our team" or
+"let me get you to a real person" out of habit -- language it learned for
+handling frustrated customers, now a false promise since nothing is left to
+act on it. Added an explicit instruction to `respond.ts`'s system prompt:
+if it can't resolve something, apologize and offer any contact info it
+actually knows from training, but never claim it's escalating or that
+someone will follow up. Confirmed directly with the exact same frustrated
+test message from before -- no more escalation promises, real fallback
+guidance instead.
+
+**Team (staff invites) hidden:**
+
+- Removed the "Team" entry from `nav-items.ts` (hides it from both the
+  sidebar and the ⌘K command search at once, since both read the same
+  array).
+- `/dashboard/team` itself now just redirects to `/dashboard` rather than
+  rendering -- the real implementation was replaced with a single
+  `redirect()` call rather than left reachable-but-unlinked, since staying
+  logged in and typing the URL directly would otherwise still work. (The
+  previous version is intact in git history at this commit.)
+- `/invite/[token]` and its accept flow were left completely untouched --
+  with no way to create a new invite link, it's naturally unreachable
+  (nothing generates a link to it), so it didn't need its own guard.
+- Confirmed nothing else breaks: the `business_users.role` column and every
+  `role === 'owner'` check elsewhere (Google Calendar connect, assistant
+  setup, etc.) are foundational, not part of the invite feature -- existing
+  `staff`-role rows keep working exactly as before, only *new* staff can no
+  longer be invited.
+
+**Decisions made (not explicit in system_design.md):**
+
+- "Hide, don't delete" for both features -- confirmed with the founder this
+  matches "add these later if needed" -- so every removal here is either a
+  single redirect, an unused import, or UI simply not rendered, never a
+  schema change or a deleted implementation file.
+- Replaced the two handoff-driven dashboard tiles with Leads-based ones
+  (a stat card + a highlight) instead of leaving them to permanently show
+  a meaningless zero -- Leads was already tracked but not shown on the
+  dashboard home at all before this.
+
+**Verified (real dev server, real Supabase, real browser, real Claude
+calls):**
+
+- A 5-check pass (run inline, not saved as a script -- pure UI-presence
+  checks with low reuse value going forward) confirmed the removed UI is
+  actually gone: dashboard shows Leads not Resolution rate, no
+  "Conversations needing you" tile, no "Team" in the sidebar,
+  `/dashboard/team` redirects away, no "Needs your help" badge anywhere.
+- `scripts/verify-phase6-dashboard.mjs` updated in place: the handoff
+  checks now assert the *absence* of flagging/badges instead of their
+  presence, plus a new check that no take-over control exists on the
+  conversation detail page. **12/12 passed.**
+- `scripts/verify-chat-fixes.mjs` updated: dropped the two take-over-UI-
+  dependent checks; the widget's poll/id-dedup/sound infrastructure (kept
+  intentionally intact for an easy future re-enable) is now verified by
+  inserting a message directly instead of via a take-over reply, so it
+  stays covered by a real test even with the UI hidden. **8/8 passed.**
+- Retired `scripts/verify-takeover-and-history.mjs` and
+  `scripts/verify-duplicate-message-fix.mjs` (both existed specifically to
+  test take-over). Replaced with `scripts/verify-widget-history-refresh.mjs`,
+  keeping just the still-fully-active "history survives a real page
+  refresh" coverage (unrelated to takeover). This one hit repeated `next
+  dev`/Turbopack HMR interruptions locally (the same dev-only artifact
+  documented in the 2026-08-19 entries) -- confirmed the underlying
+  server-side code is completely correct via a direct raw API call (real
+  200, real reply, real reply ids, 5.4s) bypassing the browser entirely;
+  full browser-based confirmation deferred to the post-deploy production
+  smoke test, where this artifact cannot occur.
+- The escalation-phrasing fix was confirmed with two separate real Claude
+  calls using the exact frustrated-customer message from the Phase 6
+  script -- no escalation promise in either reply.
+- Full local `npm run build` passed clean.
+
+**Still incomplete / next step:** the domain work (connecting
+`app.falahchat.com` to this project) is still pending the founder's DNS
+action -- see the in-conversation guidance on adding the Vercel-provided
+CNAME record wherever `falahchat.com`'s DNS is actually managed.
+`falahchat.com` itself already has a real, separate marketing site the
+founder wants to keep as-is -- no landing page work needed here.
+
 ## 2026-08-20 — Fixed the Google Calendar redirect URI; added privacy policy/terms pages toward OAuth verification
 
 **Redirect URI mismatch, fixed by the founder.** The `redirect_uri_mismatch`

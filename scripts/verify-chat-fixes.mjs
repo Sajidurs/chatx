@@ -1,22 +1,22 @@
-// Verifies the five issues the founder reported after testing the human
-// takeover + widget feature live:
-// 1. A reply sent from the dashboard while a human has taken over didn't
-//    show up on the widget until the visitor manually refreshed the page.
-//    Root cause: the widget's polling effect keyed off `open`/`leadCaptured`,
-//    but a session ID set asynchronously via a ref mutation (not state)
-//    never actually triggered that effect to start for a brand-new
-//    conversation -- only a full page reload (which re-mounts everything)
-//    happened to paper over it. This test deliberately never reloads the
-//    visitor's page, which is exactly what the old code got wrong.
-// 2. Sending a reply from the dashboard felt slow. Root cause: the
-//    optimistic UI update was wrapped inside <form action={fn}>, which
-//    defers the whole handler until the server round-trip resolves instead
-//    of committing synchronously.
+// Verifies several issues the founder reported after testing the widget
+// live:
 // 3. The visitor couldn't type/send a follow-up while the AI was still
 //    replying to the previous message (input was disabled).
 // 4. No way for the business to see which conversations have new visitor
 //    activity vs. already read -- new unread indicator on the list page.
-// 5. Sound notification when a new message arrives while minimized/closed.
+// 5. Sound notification when a new message arrives via the widget's
+//    background poll (not the AI's own direct reply to the visitor's own
+//    message, which shows up a different way).
+//
+// Originally also covered two human-takeover bugs (issues #1/#2 in the
+// changelog) -- that feature was hidden for launch (CHANGELOG 2026-08-20),
+// so those checks were removed. The widget's poll/id-dedup/sound
+// infrastructure that fix relied on is deliberately still intact (not
+// ripped out) so takeover is a quick re-enable later, not a rebuild -- this
+// simulates the same "a message shows up asynchronously via polling"
+// scenario by inserting an assistant message directly, instead of via a
+// dashboard take-over reply, to keep that infrastructure covered by a real
+// test even with the UI that used to trigger it hidden.
 //
 // Usage: node --env-file=.env.local scripts/verify-chat-fixes.mjs
 // Requires: npm run dev already running on http://localhost:3000.
@@ -133,32 +133,22 @@ try {
     listHtmlAfter.includes('aria-label="Unread"') ? "still present" : "cleared"
   );
 
-  // --- Owner takes over and replies -- back on the SAME conversation page ---
-  await ownerPage.goto(`${BASE_URL}/dashboard/conversations/${sessionId}`);
-  await ownerPage.waitForLoadState("networkidle");
-  await ownerPage.getByRole("button", { name: "Take over" }).click();
-  await sleep(2000);
-
+  // --- Simulates a message arriving "from elsewhere" (what a human
+  // take-over reply used to do) by inserting one directly, to keep the
+  // widget's poll/id-dedup/sound infrastructure covered by a real test. ---
   const replyText = "Hi Jordan, yes -- we offer 30% off for registered non-profits!";
-  const sendClickedAt = Date.now();
-  await ownerPage.getByPlaceholder("Reply as yourself...").fill(replyText);
-  await ownerPage.getByRole("button", { name: "Send" }).click();
-  await ownerPage.waitForFunction((text) => document.body.innerText.includes(text), replyText, { timeout: 5000 });
-  const bubbleDelayMs = Date.now() - sendClickedAt;
-  check(
-    `issue #2 -- the admin's own reply appears near-instantly, not after a multi-second delay (${bubbleDelayMs}ms)`,
-    bubbleDelayMs < 1000,
-    `${bubbleDelayMs}ms`
-  );
+  await admin.from("chat_messages").insert({ session_id: sessionId, role: "assistant", content: replyText });
 
-  // --- Issue #1 -- does the VISITOR'S page (still open the whole time, NEVER reloaded) pick it up? ---
+  // --- Does the VISITOR'S page (still open the whole time, NEVER reloaded) pick it up via polling? ---
   await sleep(9000); // widget polls every 4s; give it two ticks
   const visitorText = await visitorPage.evaluate(() => document.body.innerText);
   check(
-    "issue #1 -- the visitor's page (never reloaded) shows the human's reply via polling alone",
+    "the visitor's page (never reloaded) shows a message that arrived via polling alone",
     visitorText.includes(replyText),
     visitorText.slice(-300)
   );
+  const occurrences = visitorText.split(replyText).length - 1;
+  check("that message renders exactly once, not duplicated", occurrences === 1, `appeared ${occurrences} time(s)`);
 
   // --- Issue #5 -- a notification sound actually fired for that reply ---
   check(
@@ -188,4 +178,4 @@ if (failed.length > 0) {
   console.error("CHAT FIXES VERIFICATION FAILED");
   process.exit(1);
 }
-console.log("Verified: all five reported issues are fixed.");
+console.log("Verified: input-while-replying queue, unread indicator, and the poll/dedup/sound infrastructure all still work correctly.");

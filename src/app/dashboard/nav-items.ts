@@ -7,7 +7,6 @@ import {
   MessageCircleMore,
   Code2,
   CalendarClock,
-  Users,
   CreditCard,
   UserCircle,
   Contact,
@@ -26,7 +25,6 @@ export const SETUP_ITEMS = [
   { href: "/dashboard/test-chat", label: "Test chat", icon: MessageCircleMore },
   { href: "/dashboard/embed", label: "Embed", icon: Code2 },
   { href: "/dashboard/calendar", label: "Calendar", icon: CalendarClock },
-  { href: "/dashboard/team", label: "Team", icon: Users },
   { href: "/plans", label: "Plan", icon: CreditCard },
   { href: "/dashboard/account", label: "Account", icon: UserCircle },
 ];

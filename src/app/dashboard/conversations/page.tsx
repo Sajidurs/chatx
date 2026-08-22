@@ -10,9 +10,7 @@ export default async function ConversationsPage() {
   const supabase = await createClient();
   const { data: sessions } = await supabase
     .from("chat_sessions")
-    .select(
-      "id, visitor_id, started_at, last_message_at, needs_handoff, handoff_reason, last_visitor_message_at, last_seen_by_business_at, chat_messages(count)"
-    )
+    .select("id, visitor_id, started_at, last_message_at, last_visitor_message_at, last_seen_by_business_at, chat_messages(count)")
     .eq("business_id", context.business.id)
     .order("last_message_at", { ascending: false })
     .limit(100);
@@ -57,9 +55,6 @@ export default async function ConversationsPage() {
                       </span>
                     </div>
                   </div>
-                  {s.needs_handoff && (
-                    <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-700">Needs your help</span>
-                  )}
                 </Link>
               );
             })}

@@ -70,7 +70,6 @@ export function EmbedWidget({
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [humanControlled, setHumanControlled] = useState(false);
   // sessionIdRef flips from undefined to a real ID asynchronously (either
   // after the history fetch below, or after a brand-new visitor's first
   // message resolves in sendMessage) -- a plain ref mutation alone doesn't
@@ -133,7 +132,6 @@ export function EmbedWidget({
           for (const m of data.messages) if (m.id) seenMessageIdsRef.current.add(m.id);
           lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
         }
-        setHumanControlled(data.controlledBy === "human");
       })
       .finally(() => setHistoryLoaded(true));
   }, [businessId]);
@@ -199,7 +197,6 @@ export function EmbedWidget({
         }
         lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
       }
-      setHumanControlled(data.controlledBy === "human");
     }
 
     const interval = setInterval(poll, 4000);
@@ -261,7 +258,6 @@ export function EmbedWidget({
       localStorage.setItem(`chatx_session_${businessId}`, data.sessionId);
       localStorage.setItem(`chatx_visitor_${businessId}`, data.visitorId);
       lastMessageAtRef.current = new Date().toISOString();
-      setHumanControlled(data.controlledBy === "human");
       setSessionKnown(true);
 
       if (data.blocked) {
@@ -360,7 +356,6 @@ export function EmbedWidget({
             )}
             <div className="flex flex-col">
               <span className="text-sm font-medium">{assistantName || "Assistant"}</span>
-              {humanControlled && <span className="text-[11px] text-gray-500">A team member has joined the chat</span>}
             </div>
           </div>
           <button

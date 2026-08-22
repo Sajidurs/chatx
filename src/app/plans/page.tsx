@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { Check } from "lucide-react";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { getCurrentUserProfile, initialsFor } from "@/lib/auth/current-user-profile";
-import { createClient } from "@/lib/supabase/server";
 import { stripe } from "@/lib/stripe/client";
 import { PLAN_PRICE_IDS, type Plan } from "@/lib/stripe/plans";
 import { formatCurrency } from "@/lib/format";
@@ -24,12 +23,6 @@ export default async function PlansPage() {
   if (!context) redirect("/login");
 
   const profile = await getCurrentUserProfile();
-  const supabase = await createClient();
-  const { count: needsHandoffCount } = await supabase
-    .from("chat_sessions")
-    .select("id", { count: "exact", head: true })
-    .eq("business_id", context.business.id)
-    .eq("needs_handoff", true);
 
   const prices = await Promise.all(PLAN_ORDER.map((plan) => stripe.prices.retrieve(PLAN_PRICE_IDS[plan])));
 
@@ -37,7 +30,6 @@ export default async function PlansPage() {
     <DashboardShell
       businessName={context.business.name}
       role={context.role}
-      needsHandoffCount={needsHandoffCount ?? 0}
       userInitials={initialsFor(profile?.displayName || profile?.email || context.business.name)}
       userAvatarUrl={profile?.avatarUrl}
     >
