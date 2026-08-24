@@ -52,10 +52,11 @@ checking was absent. `npx tsc --noEmit` clean. Not yet committed --
 pending the founder's go-ahead alongside the still-unshipped widget
 redesign below.
 
-**Still incomplete / next step:** ask the founder whether to commit (and
-separately, whether to push/deploy) this together with or separately from
-the widget redesign, which is also still sitting uncommitted pending their
-local review.
+**Shipped:** founder reviewed the widget redesign locally and approved
+both this and it together. Committed (`80b6185`) and deployed to
+production (`app.falahchat.com`) via `vercel --prod`. Re-ran the full
+`verify-plan-lock.mjs` suite against the live production URL afterward
+(not just locally) -- 10/10 checks passed there too.
 
 ## 2026-08-22 — Also submitted Google OAuth for verification; redesigned the chat widget
 
