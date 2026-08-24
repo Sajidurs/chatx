@@ -6,6 +6,7 @@ import { stripe } from "@/lib/stripe/client";
 import { PLAN_PRICE_IDS, type Plan } from "@/lib/stripe/plans";
 import { formatCurrency } from "@/lib/format";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { ErrorBanner } from "../dashboard/confirm-banners";
 
 const PLAN_ORDER: Plan[] = ["free", "starter", "pro"];
 
@@ -39,6 +40,8 @@ export default async function PlansPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Choose a plan</h1>
           <p className="text-sm text-gray-500">You&apos;re currently on the {context.business.plan} plan.</p>
         </div>
+
+        <ErrorBanner />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {PLAN_ORDER.map((plan, i) => {

@@ -19,3 +19,12 @@ export function planForPriceId(priceId: string): Plan | undefined {
 export function isPlan(value: string): value is Plan {
   return value === "free" || value === "starter" || value === "pro";
 }
+
+// Cheapest to priciest -- used to tell an upgrade (bill immediately) apart
+// from a downgrade (never bill, only credit) when changing an existing
+// subscription's price in place.
+const PLAN_RANK: Record<Plan, number> = { free: 0, starter: 1, pro: 2 };
+
+export function isPlanUpgrade(from: Plan, to: Plan): boolean {
+  return PLAN_RANK[to] > PLAN_RANK[from];
+}

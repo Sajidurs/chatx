@@ -3,6 +3,65 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-24 — Upgrades bill immediately; downgrades never charge
+
+Founder asked for a specific billing rule after the previous fix: when an
+existing subscriber changes plans mid-cycle, an **upgrade** (e.g. Starter
+to Pro, which costs more) should collect the prorated difference right
+away, while a **downgrade** should never prompt for payment -- it can only
+ever produce a credit.
+
+**Before this fix**, `/api/checkout`'s in-place subscription-update path
+(used once a business already has a subscription, so plan changes don't
+re-run Stripe Checkout) used `proration_behavior: "create_prorations"` for
+every plan change regardless of direction. That creates the proration line
+items but doesn't invoice or charge for them until the customer's next
+regular renewal -- so an upgrade granted Pro-level access immediately while
+silently deferring the actual charge for weeks, which doesn't match how
+the founder wants this to work.
+
+**Fixed** (`src/lib/stripe/plans.ts`, `src/app/api/checkout/route.ts`):
+- Added `isPlanUpgrade(from, to)`, ranking free < starter < pro.
+- On an upgrade: `proration_behavior: "always_invoice"` (creates and
+  immediately finalizes an invoice for the prorated difference) plus
+  `payment_behavior: "error_if_incomplete"` (if the charge fails, Stripe's
+  update call itself throws rather than applying the plan change against
+  an unpaid balance -- confirmed directly that a failed update leaves the
+  subscription's price completely unchanged, so there's no window where a
+  customer has the pricier plan without having been charged for it).
+- On a downgrade: unchanged (`create_prorations`, no forced payment) --
+  the credit rolls into the next invoice automatically, exactly as before.
+- A failed charge now redirects back to `/plans?error=...` with Stripe's
+  own message (e.g. "Your card was declined.") instead of crashing or
+  silently proceeding. Added `<ErrorBanner />` to the Plans page to
+  actually display it -- it had no error handling at all before this.
+
+**Verified against real Stripe test-mode data** (not just Stripe's
+documented behavior): ran a real checkout to Starter, then an in-app
+upgrade to Pro -- confirmed a second invoice was created and marked `paid`
+immediately (`billing_reason: subscription_update`, correct prorated
+amount) and the subscription's price changed to Pro. Then downgraded the
+same subscription back to Starter -- confirmed no new invoice was created
+or charged; only two pending, uninvoiced line items appeared (a credit and
+a partial charge netting to a credit) that will apply to the next regular
+invoice. Separately confirmed the failure path: forced a real Stripe error
+on a live subscription and verified the catch block correctly identifies
+it as a `Stripe.errors.StripeError`, extracts a usable message, and
+importantly that Stripe's update is atomic -- the subscription's price was
+provably unchanged after the failed attempt. All test subscriptions and
+throwaway businesses cleaned up afterward. `npx tsc --noEmit` and
+`npm run build` both clean.
+
+**Also clarified this session:** the "plan change is being processed" flow
+the founder saw earlier (going straight from the Plans page to a dashboard
+banner, no Stripe Checkout page) is the *existing, correct* behavior for
+any business that already has a subscription on file -- re-running
+Checkout every time someone changes plans would mean re-entering card
+details unnecessarily. That code was already live in production before
+this session; nothing needed deploying for that part to work, which is
+why the plan change itself did take effect even though the banner alone
+didn't make that obvious.
+
 ## 2026-08-24 — Fixed plan upgrades not saving; redesigned the post-checkout success page
 
 Founder reported three billing bugs after upgrading Aim Haircut from Free
