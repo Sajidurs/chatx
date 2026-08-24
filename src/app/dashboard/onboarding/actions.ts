@@ -39,7 +39,12 @@ export async function generateFromQuestionnaire(formData: FormData) {
     businessType: field(formData, "businessType"),
     services: field(formData, "services"),
     tone: field(formData, "tone"),
-    bookingRules: field(formData, "bookingRules"),
+    // The page already disables this field outside Pro (booking rules are
+    // meaningless when the assistant has no ability to book at all) --
+    // this is the server-side backstop so a direct POST can't sneak
+    // booking-specific instructions into the prompt on a plan that can't
+    // act on them.
+    bookingRules: context.business.plan === "pro" ? field(formData, "bookingRules") : "",
     faqs: field(formData, "faqs"),
   };
 

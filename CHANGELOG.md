@@ -3,6 +3,47 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-24 — Fixed the chat AI still trying to book on non-Pro plans; locked the Booking rules field to Pro
+
+Founder tested a free-plan account's live chat widget and asked it to book
+an appointment -- the AI replied "What service are you looking for, and
+what date/time works for you?" as if a real booking was about to happen,
+even though free-plan businesses have no booking tool at all. Two related
+gaps, both fixed:
+
+**The chat bug.** `respondToVisitorMessage` (`src/lib/chat/respond.ts`)
+already correctly withheld the actual booking tool from Claude when the
+plan doesn't include booking (or the calendar isn't connected) -- but
+nothing told Claude *why*, so it kept behaving as if a booking was in
+progress right up to the point it would have called a tool that was never
+offered to it. Added an explicit system-prompt line for exactly that case:
+when booking isn't available, the AI is told plainly not to ask for a
+preferred date/time/service, and instead to share the business's phone or
+email (if it knows them from training) as the way to actually book, or
+apologize if it doesn't know either. Reused the existing `bookingReady`
+plan/calendar check rather than adding a second one.
+
+**The assistant setup gap.** The "Booking rules" field in Assistant setup
+(`src/app/dashboard/onboarding/page.tsx`) had no plan gating -- a
+free/starter owner could type in booking policies that would never
+actually apply to anything, since their assistant can't book. Disabled the
+field outside Pro (matching the existing `!isOwner` disabled pattern) with
+an inline note and a link to `/plans`; added a matching server-side guard
+in `generateFromQuestionnaire` (`onboarding/actions.ts`) that forces the
+value to blank for non-Pro plans regardless of what a raw POST sends, the
+same backstop pattern already used on the Calendar connect action.
+
+**Verified:** hit `/api/chat` directly against a fresh free-plan business
+with no calendar connected asking to book -- confirmed the AI now replies
+with the business's phone/email instead of asking for a date/time,
+pulling contact info from its own trained system prompt as designed. Also
+re-tested against the existing Pro demo business (which does have a
+connected calendar) to confirm the real booking flow still asks for
+date/time and proceeds normally -- no regression. Checked the Assistant
+setup page as a fresh free-plan owner: the Booking rules textarea renders
+disabled with the upgrade note visible. `npx tsc --noEmit` and
+`npm run build` both clean. Not yet committed/deployed.
+
 ## 2026-08-24 — Locked Bookings and Calendar behind the Pro plan in the dashboard
 
 Founder noticed a free-plan account could still open Bookings and Calendar

@@ -203,8 +203,26 @@ export async function respondToVisitorMessage(params: {
   const noHandoffContext =
     "If you genuinely can't resolve something for the customer, do not say you're flagging it, escalating it, or that a team member will follow up -- there is no one monitoring this chat to act on that right now. Instead, apologize for not being able to help further, and if you know how to reach this business directly (phone, email, etc. -- only if you actually know it from what you've been trained on), share that as the next step.";
 
+  // Booking tools are only actually attached to `tools` further below, once
+  // history/executor setup is done -- computed here, ahead of the system
+  // prompt, so the AI is told the truth about whether it can book *before*
+  // it starts responding. Without this, the AI has no booking tool AND no
+  // idea it's missing one, so it keeps behaving as if a booking is in
+  // progress (asking for a preferred date/time/service) right up until the
+  // moment it would have called a tool that was never offered to it -- a
+  // real bug a customer hit on a free-plan business's widget.
+  const { data: planLimits } = await admin
+    .from("plan_limits")
+    .select("booking_enabled")
+    .eq("plan", business.plan)
+    .single();
+  const bookingReady = Boolean(planLimits?.booking_enabled && business.google_refresh_token && business.google_calendar_id);
+  const noBookingContext = !bookingReady
+    ? "You cannot book, reschedule, or cancel appointments through this chat right now -- that capability isn't available for this business at the moment. If a customer asks to book, do not ask for their preferred date, time, or service as if a booking is in progress. Instead, let them know you can't book directly through chat, and if you know this business's phone number or email (only if you actually know it from what you've been trained on), share it as the way to book. If you don't know a phone number or email, just apologize and say you're not able to book directly right now."
+    : "";
+
   const systemPrompt =
-    [dateContext, leadContext, handoffContinuityContext, noHandoffContext, business.system_prompt || DEFAULT_SYSTEM_PROMPT]
+    [dateContext, leadContext, handoffContinuityContext, noHandoffContext, noBookingContext, business.system_prompt || DEFAULT_SYSTEM_PROMPT]
       .filter(Boolean)
       .join("\n\n") + knowledgeSection;
 
@@ -242,17 +260,9 @@ export async function respondToVisitorMessage(params: {
     }
   }
 
-  // Booking tools only exist for this turn if the plan includes booking AND
-  // the business has actually connected a Google Calendar -- both are
-  // required, not just plan_limits.booking_enabled, since there's nothing to
-  // book against without a connected calendar.
-  const { data: planLimits } = await admin
-    .from("plan_limits")
-    .select("booking_enabled")
-    .eq("plan", business.plan)
-    .single();
-
-  const bookingReady = Boolean(planLimits?.booking_enabled && business.google_refresh_token && business.google_calendar_id);
+  // bookingReady (booking tools only exist for this turn if the plan
+  // includes booking AND the business has actually connected a Google
+  // Calendar) was already computed above, alongside noBookingContext.
   const bookingExecutor = bookingReady
     ? createBookingToolExecutor(
         {

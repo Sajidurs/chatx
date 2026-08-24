@@ -14,6 +14,7 @@ export default async function OnboardingPage() {
 
   const { business } = context;
   const isOwner = context.role === "owner";
+  const isPro = business.plan === "pro";
 
   return (
     <div className="flex max-w-2xl flex-col gap-8">
@@ -103,7 +104,16 @@ export default async function OnboardingPage() {
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Booking rules (hours, buffer times, what needs a deposit, etc.)
-            <textarea name="bookingRules" disabled={!isOwner} rows={3} className={inputClass} />
+            <textarea name="bookingRules" disabled={!isOwner || !isPro} rows={3} className={inputClass} />
+            {!isPro && (
+              <span className="text-xs font-normal text-gray-500">
+                Booking rules are a Pro plan feature -- your assistant can&apos;t book appointments on this plan, so there&apos;s nothing for these
+                rules to apply to yet.{" "}
+                <a href="/plans" className="font-medium text-brand-700 hover:underline">
+                  View plans
+                </a>
+              </span>
+            )}
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
             Frequently asked questions and answers
