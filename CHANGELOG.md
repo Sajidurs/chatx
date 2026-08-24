@@ -50,24 +50,30 @@ uses to build Stripe's `success_url`/`cancel_url`.
   before showing anything, since a `session_id` is guessable and this
   page must not leak another business's billing details.
 
-**Still needs a manual step:** the Vercel CLI's `vercel env` commands are
+**The manual step is done.** The Vercel CLI's `vercel env` commands are
 hard-blocked for this agent regardless of confirmation (a safety boundary,
-not a bug) -- so `STRIPE_WEBHOOK_SECRET` and `NEXT_PUBLIC_APP_URL` still
-need to be updated by hand in the Vercel dashboard before this is fully
-live. The real webhook signing secret is saved locally at
-`C:\Users\SAJIDU~1\AppData\Local\Temp\stripe-webhook-secret.txt` for the
-founder to paste in, then delete.
+not a bug), so `STRIPE_WEBHOOK_SECRET` and `NEXT_PUBLIC_APP_URL` had to be
+updated by the founder directly in the Vercel dashboard, then redeployed.
 
-**Verified:** ran a full real Stripe test-mode checkout end-to-end via
-Playwright (Stripe's own test card 4242 4242 4242 4242) against a fresh
-free-plan business -- landed on `/checkout/success` showing "Plan:
-Starter, Amount: $19.00 / month, Renews on: September 24, 2026" pulled
-live from Stripe. Separately confirmed a second business logged in and
-reusing the first business's real `session_id` gets the generic fallback
-message, not the Starter plan's billing details -- the ownership check
-holds. `npx tsc --noEmit` and `npm run build` both clean. Not yet
-deployed -- deploying now, but the plan-update fix won't be fully live
-until the founder updates the two env vars by hand.
+**Verified, twice.** First locally: ran a full real Stripe test-mode
+checkout end-to-end via Playwright (Stripe's own test card 4242 4242 4242
+4242) against a fresh free-plan business -- landed on `/checkout/success`
+showing "Plan: Starter, Amount: $19.00 / month, Renews on: September 24,
+2026" pulled live from Stripe. Separately confirmed a second business
+logged in and reusing the first business's real `session_id` gets the
+generic fallback message, not the Starter plan's billing details -- the
+ownership check holds.
+
+Then again against the live production site itself, after the founder
+updated both env vars and a redeploy went out: same real-checkout test
+against `app.falahchat.com` this time. Confirmed the post-checkout
+redirect landed on `app.falahchat.com/checkout/success` (not the old
+`chatx-rust.vercel.app`), and -- the actual point of all this -- confirmed
+the business's `plan` column flipped to `starter` in the database on its
+own within a few seconds, with no manual sync required. That's the real
+proof the webhook is now live and working, not just configured. Test
+subscription and business cleaned up afterward. `npx tsc --noEmit` and
+`npm run build` both clean throughout.
 
 ## 2026-08-24 — Fixed the chat AI still trying to book on non-Pro plans; locked the Booking rules field to Pro
 
