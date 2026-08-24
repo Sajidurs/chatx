@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, Lock } from "lucide-react";
 import { ALL_NAV_ITEMS } from "./nav-items";
 
-export function CommandSearch() {
+export function CommandSearch({ plan }: { plan: string }) {
+  const isPro = plan === "pro";
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,8 +31,8 @@ export function CommandSearch() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  function go(href: string) {
-    router.push(href);
+  function go(item: (typeof ALL_NAV_ITEMS)[number]) {
+    router.push(item.proOnly && !isPro ? "/plans" : item.href);
     setQuery("");
     setOpen(false);
     inputRef.current?.blur();
@@ -47,7 +48,7 @@ export function CommandSearch() {
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && matches[0]) go(matches[0].href);
+          if (e.key === "Enter" && matches[0]) go(matches[0]);
         }}
         placeholder="Search or jump to a page..."
         className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-9 pr-14 text-sm outline-none focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"
@@ -59,18 +60,25 @@ export function CommandSearch() {
       {open && (
         <div className="absolute left-0 right-0 top-full z-20 mt-2 max-h-72 overflow-y-auto rounded-xl border border-gray-100 bg-white p-1.5 shadow-lg">
           {matches.length === 0 && <p className="px-3 py-2 text-sm text-gray-400">No matching pages.</p>}
-          {matches.map((item) => (
-            <button
-              key={item.href}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => go(item.href)}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-            >
-              <item.icon className="h-4 w-4 text-gray-400" />
-              {item.label}
-            </button>
-          ))}
+          {matches.map((item) => {
+            const locked = !!item.proOnly && !isPro;
+            return (
+              <button
+                key={item.href}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => go(item)}
+                title={locked ? "Upgrade your plan to use this feature" : undefined}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50 ${
+                  locked ? "text-gray-400" : "text-gray-700"
+                }`}
+              >
+                <item.icon className="h-4 w-4 text-gray-400" />
+                <span className="flex-1">{item.label}</span>
+                {locked && <Lock className="h-3.5 w-3.5 shrink-0" />}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

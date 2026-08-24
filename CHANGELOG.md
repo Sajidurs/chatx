@@ -3,6 +3,145 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-24 — Locked Bookings and Calendar behind the Pro plan in the dashboard
+
+Founder noticed a free-plan account could still open Bookings and Calendar
+from the dashboard, even though `plan_limits.booking_enabled` and
+`system_design.md`'s plans table both say booking is Pro-only. Asked
+whether Starter should also get booking (a possible pricing change) or
+whether this was purely a UI gap with Pro remaining the only booking tier
+-- founder confirmed **Pro-only, matches current setup**, so this was a
+UI/access-gating fix only, no pricing or backend change.
+
+**What changed:**
+
+- Sidebar (`sidebar-nav.tsx`) and the ⌘K command search (`command-search.tsx`)
+  now render Bookings/Calendar as a disabled-looking button with a "Upgrade
+  your plan to use this feature" hover tooltip for any non-Pro plan, instead
+  of a real link -- clicking sends them to `/plans`.
+- `dashboard/bookings/page.tsx` and `dashboard/calendar/page.tsx` both check
+  `business.plan !== "pro"` server-side and render a new shared `UpgradeLock`
+  component (lock icon, explanation, "View plans" button) instead of the
+  real content -- so the lock can't be bypassed by typing the URL directly.
+- `calendar/actions.ts`'s `connectGoogleCalendar` server action also rejects
+  non-Pro businesses, as a backstop in case a request ever reaches it
+  without going through the page UI.
+- Verification (`scripts/verify-plan-lock.mjs`) caught a real bug: the
+  dashboard home page had two un-gated direct links straight to
+  `/dashboard/bookings` (the "Bookings" stat card and the "Upcoming
+  meeting" highlight card) that completely bypassed the sidebar lock --
+  fixed both to point to `/plans` instead when the plan isn't Pro.
+
+**Decisions made:** locking applies to Free and Starter alike (both
+`!== "pro"`), matching the existing `plan_limits.booking_enabled` values for
+both tiers -- confirmed no separate Starter carve-out was wanted.
+
+**Verified:** ran `scripts/verify-plan-lock.mjs` end-to-end against real
+Free, Starter, and Pro businesses (created and torn down via the service
+role, not fixtures) -- confirms Free/Starter see the sidebar labels but not
+real links, get the tooltip on hover, get redirected to `/plans` on click
+(sidebar and ⌘K search both), and get the upgrade card on direct URL
+access to both pages; confirms Pro sees everything working normally. Two
+early test failures turned out to be test-script issues, not app bugs: a
+Turbopack dev-server compile-lag timing artifact (routes not yet visited
+took longer to render than `networkidle` accounted for -- fixed by waiting
+on the URL/text itself instead) and a substring collision where the
+gated Calendar page's own marketing copy ("Connect Google Calendar so your
+assistant can...") happened to contain the same phrase the test was
+checking was absent. `npx tsc --noEmit` clean. Not yet committed --
+pending the founder's go-ahead alongside the still-unshipped widget
+redesign below.
+
+**Still incomplete / next step:** ask the founder whether to commit (and
+separately, whether to push/deploy) this together with or separately from
+the widget redesign, which is also still sitting uncommitted pending their
+local review.
+
+## 2026-08-22 — Also submitted Google OAuth for verification; redesigned the chat widget
+
+**Google OAuth verification submitted.** Founder completed the full flow in
+Google Cloud Console this session: filled in Branding (app name, logo,
+homepage/privacy/terms links), added the Calendar scope + justification on
+Data Access, recorded and linked a demo video, hit a domain-ownership
+snag (their existing Search Console verification only covered
+`https://falahchat.com/` as a URL-prefix property, which does not cover the
+`app.falahchat.com` subdomain -- fixed by adding a Domain-type property for
+`falahchat.com` instead, which covers all subdomains), published branding,
+and submitted for review. Status: "under review" by Google's Trust & Safety
+team, first response expected in 3-5 days, full review up to 4-6 weeks. The
+current (Testing-mode) app is unaffected in the meantime.
+
+- Set up a real, working demo business ("Bloom Hair Studio," assistant
+  persona "Ivy," plan set to Pro so booking tools are active) directly in
+  the shared database for the founder to record the required demo video
+  against -- trained persona/hours/FAQs included, Google Calendar
+  deliberately left disconnected so connecting it live was the actual thing
+  being demonstrated. Verified end-to-end (login, chat reply grounded in
+  the trained FAQ) before handing off login details.
+- Confirmed the Calendar scope Falah Chat requests is Google's "sensitive"
+  tier, not "restricted" -- the annual CASA security-assessment requirement
+  for 100+ users does not apply here (corrects an earlier, more cautious
+  heads-up given before this was confirmed against the real console).
+
+**Decisions made:** none beyond the founder's own Google Console actions;
+this agent's role was interpreting Google's UI/error messages correctly at
+each step (e.g. diagnosing the URL-prefix-vs-domain-property distinction)
+and drafting the justification text and video-demo script.
+
+**Still incomplete / next step:** waiting on Google. Nothing to do until
+they respond by email -- check back in when that happens.
+
+## 2026-08-22 — Redesigned the embeddable chat widget: minimalist styling, starter prompts, online status
+
+Founder shared a reference screenshot and asked for a minimalist/clean/
+modern look, plus two new features: predefined starter messages on the
+first screen, and an online-status indicator.
+
+**What changed** (`embed-widget.tsx` only -- no behavior/logic touched,
+purely markup and styling):
+
+- Message bubbles switched from plain black/gray rounded-lg boxes to
+  brand-green (visitor) / light-gray (assistant) rounded-2xl bubbles with a
+  "tail" corner (`rounded-br-md`/`rounded-bl-md`), matching the style
+  already established in the dashboard's own conversation view.
+- Input row switched from a rectangular border + text "Send" button to a
+  pill-shaped input with a circular brand-green icon button (a hand-rolled
+  inline paper-plane SVG, matching this file's existing convention of never
+  pulling in an icon library -- this widget is embedded on third-party
+  sites, so its own JS payload stays as small as reasonably possible).
+- Header and both the open panel and the closed launcher bubble got a
+  green "online" presence dot on the assistant's avatar, plus an "Online"
+  text label under the name in the open header -- always on, since the
+  assistant has no real away/offline state to reflect instead.
+- The intake form gained a row of tappable starter-prompt chips ("👋 Just
+  saying hi," "I have a question," "I'd like to book an appointment") that
+  fill the existing message textarea on tap -- still goes through the same
+  name/email/message submission as before, just faster to get started.
+  Kept intentionally generic/hardcoded rather than building a whole
+  per-business configuration feature for this, matching "few working
+  features first."
+- Panel corners rounded further (`rounded-3xl`) and borders/shadows
+  softened for an overall less boxy, more modern feel.
+
+**Decisions made (not explicit in system_design.md):** starter prompts are
+fixed text, not yet configurable per business -- a reasonable follow-up
+feature if a founder wants business-specific quick replies later, but out
+of scope for a styling/UX pass.
+
+**Verified (real dev server, real browser, real Claude replies):**
+
+- Screenshots of the closed launcher bubble, the intake screen (starter
+  prompts render and tapping one fills the textarea, confirmed
+  programmatically), and a real conversation with both a visitor and a real
+  AI reply bubble -- all render as intended.
+- Re-ran `scripts/verify-chat-fixes.mjs` in full since this touches the
+  same file the input-queueing/unread/sound fixes live in -- **8/8
+  passed**, confirming the redesign didn't regress any of that underlying
+  behavior.
+- Full local `npm run build` passed clean.
+
+**Still incomplete / next step:** none for this item.
+
 ## 2026-08-22 — Connected app.falahchat.com; switched Google Calendar to the new domain
 
 The founder wants `falahchat.com` (a real, existing, separate marketing site

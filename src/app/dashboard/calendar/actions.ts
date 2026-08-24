@@ -16,6 +16,11 @@ export async function connectGoogleCalendar() {
   const context = await getCurrentBusinessContext();
   if (!context) redirect("/login");
   if (context.role !== "owner") fail("Only the business owner can connect Google Calendar.");
+  // The page already hides this behind an upgrade prompt for non-Pro
+  // plans -- this is the server-side backstop so a direct POST can't
+  // bypass that and connect a calendar the booking tools will never
+  // actually use (plan_limits.booking_enabled gates them separately).
+  if (context.business.plan !== "pro") fail("Calendar booking is a Pro plan feature. Upgrade your plan to connect a calendar.");
 
   // Anti-CSRF: a nonce set in this browser's session before redirecting to
   // Google, and checked on the way back -- proves the callback belongs to

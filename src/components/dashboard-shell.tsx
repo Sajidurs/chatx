@@ -12,12 +12,14 @@ import { PageTransition } from "@/app/dashboard/page-transition";
 export function DashboardShell({
   businessName,
   role,
+  plan,
   userInitials,
   userAvatarUrl,
   children,
 }: {
   businessName: string;
   role: string;
+  plan: string;
   userInitials: string;
   userAvatarUrl?: string | null;
   children: React.ReactNode;
@@ -33,7 +35,7 @@ export function DashboardShell({
             <LogoMark />
             <span className="text-base font-semibold tracking-tight">Falah Chat</span>
           </div>
-          <SidebarNav />
+          <SidebarNav plan={plan} />
           <div className="mt-6 border-t border-gray-100 px-3 pt-4">
             <form action="/auth/signout" method="post">
               <button type="submit" className="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-500 hover:bg-gray-100">
@@ -45,7 +47,7 @@ export function DashboardShell({
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <header className="flex h-16 shrink-0 items-center justify-between gap-6 border-b border-gray-100 px-6">
-            <CommandSearch />
+            <CommandSearch plan={plan} />
             <div className="flex items-center gap-4">
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-semibold leading-tight">{businessName}</p>

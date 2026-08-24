@@ -47,13 +47,22 @@ function postSizeToParent(el: HTMLElement) {
 
 function TypingDots() {
   return (
-    <div className="mr-auto flex w-fit items-center gap-1 rounded-lg bg-gray-100 px-3 py-2.5">
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500 [animation-delay:-0.3s]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500 [animation-delay:-0.15s]" />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" />
+    <div className="mr-auto flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-3">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
     </div>
   );
 }
+
+// A small green presence dot anchored to the bottom-right of an avatar --
+// always "online" since the assistant is available around the clock, no
+// real away/offline state exists in the system to reflect instead.
+function OnlineDot({ size = "h-3 w-3" }: { size?: string }) {
+  return <span className={`absolute -right-0.5 -bottom-0.5 ${size} rounded-full border-2 border-white bg-brand-500`} />;
+}
+
+const STARTER_PROMPTS = ["👋 Just saying hi", "I have a question", "I'd like to book an appointment"];
 
 export function EmbedWidget({
   businessId,
@@ -310,12 +319,12 @@ export function EmbedWidget({
 
   if (!open) {
     return (
-      <div ref={rootRef} className="inline-block p-3">
+      <div ref={rootRef} className="relative inline-block p-3">
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="Open chat"
-          className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-black shadow-lg transition-transform hover:scale-105"
+          className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-brand-500 shadow-lg shadow-brand-500/30 transition-transform hover:scale-105"
         >
           {assistantPhotoUrl ? (
             <Image src={assistantPhotoUrl} alt={assistantName || "Chat"} width={64} height={64} className="h-full w-full object-cover" unoptimized />
@@ -331,38 +340,43 @@ export function EmbedWidget({
             </svg>
           )}
         </button>
+        <span className="absolute bottom-3.5 right-3.5 h-4 w-4 rounded-full border-[3px] border-white bg-brand-400" />
       </div>
     );
   }
 
   return (
     <div ref={rootRef} className="inline-block p-3">
-      <div className="flex h-[600px] w-[370px] flex-col overflow-hidden rounded-xl border bg-white text-gray-900 shadow-2xl">
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-          <div className="flex items-center gap-2">
-            {assistantPhotoUrl ? (
-              <Image
-                src={assistantPhotoUrl}
-                alt={assistantName || "Assistant"}
-                width={28}
-                height={28}
-                className="rounded-full object-cover"
-                unoptimized
-              />
-            ) : (
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500">
-                {(assistantName || "A")[0].toUpperCase()}
-              </div>
-            )}
+      <div className="flex h-[600px] w-[370px] flex-col overflow-hidden rounded-3xl border border-gray-100 bg-white text-gray-900 shadow-2xl">
+        <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="relative shrink-0">
+              {assistantPhotoUrl ? (
+                <Image
+                  src={assistantPhotoUrl}
+                  alt={assistantName || "Assistant"}
+                  width={36}
+                  height={36}
+                  className="h-9 w-9 rounded-full object-cover"
+                  unoptimized
+                />
+              ) : (
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-100 text-sm font-medium text-brand-700">
+                  {(assistantName || "A")[0].toUpperCase()}
+                </div>
+              )}
+              <OnlineDot />
+            </div>
             <div className="flex flex-col">
-              <span className="text-sm font-medium">{assistantName || "Assistant"}</span>
+              <span className="text-sm font-semibold">{assistantName || "Assistant"}</span>
+              <span className="text-xs text-gray-400">Online</span>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setOpen(false)}
             aria-label="Close chat"
-            className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
             <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
               <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -376,7 +390,7 @@ export function EmbedWidget({
               e.preventDefault();
               submitLead();
             }}
-            className="flex flex-1 flex-col gap-3 overflow-y-auto p-4"
+            className="flex flex-1 flex-col gap-3.5 overflow-y-auto p-4"
           >
             <p className="text-sm text-gray-600">
               Hi! Tell us a little about yourself and we&apos;ll get started -- {assistantName || "our assistant"} will pick up right where you
@@ -388,7 +402,7 @@ export function EmbedWidget({
               placeholder="Your name"
               required
               disabled={sending}
-              className="rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
+              className="rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
             />
             <input
               value={leadEmail}
@@ -397,7 +411,7 @@ export function EmbedWidget({
               placeholder="Your email"
               required
               disabled={sending}
-              className="rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
+              className="rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
             />
             <textarea
               value={leadMessage}
@@ -406,28 +420,43 @@ export function EmbedWidget({
               required
               rows={3}
               disabled={sending}
-              className="flex-1 resize-none rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
+              className="flex-1 resize-none rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
             />
+            {/* Predefined starter prompts -- one tap fills the message field
+                above so a visitor doesn't have to think of what to type;
+                still goes through the same name/email/message submission. */}
+            <div className="flex flex-wrap gap-1.5">
+              {STARTER_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => setLeadMessage(prompt)}
+                  className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
             <button
               type="submit"
               disabled={sending || !leadName.trim() || !leadEmail.trim() || !leadMessage.trim()}
-              className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
             >
               Start chat
             </button>
           </form>
         ) : (
           <>
-            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+            <div className="flex-1 space-y-2.5 overflow-y-auto p-4">
               {messages.map((m, i) => (
                 <div
                   key={i}
                   className={
                     m.role === "visitor"
-                      ? "ml-auto max-w-[80%] rounded-lg bg-black px-3 py-2 text-sm text-white"
+                      ? "ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-brand-500 px-3.5 py-2.5 text-sm text-white"
                       : m.role === "system"
-                        ? "mx-auto max-w-[90%] rounded-md bg-yellow-50 px-3 py-2 text-center text-xs text-yellow-800"
-                        : "mr-auto max-w-[80%] rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-900"
+                        ? "mx-auto max-w-[90%] rounded-xl bg-yellow-50 px-3 py-2 text-center text-xs text-yellow-800"
+                        : "mr-auto max-w-[80%] rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900"
                   }
                 >
                   {m.content}
@@ -442,20 +471,23 @@ export function EmbedWidget({
                 e.preventDefault();
                 send();
               }}
-              className="flex gap-2 border-t p-3"
+              className="flex items-center gap-2 border-t border-gray-100 p-3"
             >
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Type a message..."
-                className="flex-1 rounded-md border px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
+                className="flex-1 rounded-full border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
               />
               <button
                 type="submit"
                 disabled={!input.trim()}
-                className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                aria-label="Send message"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white transition-colors hover:bg-brand-600 disabled:opacity-40"
               >
-                Send
+                <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px] translate-x-[1px]">
+                  <path d="M4 12l16-8-6 8 6 8-16-8z" fill="currentColor" />
+                </svg>
               </button>
             </form>
           </>

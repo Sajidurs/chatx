@@ -1,6 +1,6 @@
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { createClient } from "@/lib/supabase/server";
-import { PageHeader, Card } from "../ui";
+import { PageHeader, Card, UpgradeLock } from "../ui";
 
 const STATUS_STYLES: Record<string, string> = {
   confirmed: "bg-brand-100 text-brand-700",
@@ -11,6 +11,15 @@ const STATUS_STYLES: Record<string, string> = {
 export default async function BookingsPage() {
   const context = await getCurrentBusinessContext();
   if (!context) return null;
+
+  if (context.business.plan !== "pro") {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Bookings" description="Meetings booked through your assistant." />
+        <UpgradeLock feature="Bookings" />
+      </div>
+    );
+  }
 
   const supabase = await createClient();
   const { data: bookings } = await supabase

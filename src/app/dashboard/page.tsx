@@ -120,7 +120,7 @@ export default async function DashboardPage({
           bg="bg-blue-50"
           label="Bookings"
           value={totalBookings ?? 0}
-          href="/dashboard/bookings"
+          href={business.plan === "pro" ? "/dashboard/bookings" : "/plans"}
           icon={<CalendarCheck className="h-5 w-5" />}
         />
         <StatCard
@@ -214,7 +214,7 @@ export default async function DashboardPage({
               description={
                 nextBooking ? `${nextBooking.customer_name} -- ${new Date(nextBooking.start_time).toLocaleString()}` : "New bookings will show up here."
               }
-              href="/dashboard/bookings"
+              href={business.plan === "pro" ? "/dashboard/bookings" : "/plans"}
             />
           </div>
         </div>

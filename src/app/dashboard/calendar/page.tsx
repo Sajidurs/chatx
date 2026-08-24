@@ -1,6 +1,6 @@
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { connectGoogleCalendar, disconnectGoogleCalendar } from "./actions";
-import { PageHeader, Card } from "../ui";
+import { PageHeader, Card, UpgradeLock } from "../ui";
 
 export default async function CalendarPage({
   searchParams,
@@ -11,15 +11,24 @@ export default async function CalendarPage({
   const context = await getCurrentBusinessContext();
   if (!context) return null;
 
+  const description =
+    "Connect Google Calendar so your assistant can check availability and book, cancel, or reschedule meetings for real, with a Google Meet link attached.";
+
+  if (context.business.plan !== "pro") {
+    return (
+      <div className="flex max-w-lg flex-col gap-6">
+        <PageHeader title="Calendar" description={description} />
+        <UpgradeLock feature="Calendar booking" />
+      </div>
+    );
+  }
+
   const isConnected = Boolean(context.business.google_calendar_id);
   const isOwner = context.role === "owner";
 
   return (
     <div className="flex max-w-lg flex-col gap-6">
-      <PageHeader
-        title="Calendar"
-        description="Connect Google Calendar so your assistant can check availability and book, cancel, or reschedule meetings for real, with a Google Meet link attached."
-      />
+      <PageHeader title="Calendar" description={description} />
 
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
       {connected && (

@@ -30,6 +30,7 @@ export default async function PlansPage() {
     <DashboardShell
       businessName={context.business.name}
       role={context.role}
+      plan={context.business.plan}
       userInitials={initialsFor(profile?.displayName || profile?.email || context.business.name)}
       userAvatarUrl={profile?.avatarUrl}
     >
