@@ -3,6 +3,72 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-24 — Fixed plan upgrades not saving; redesigned the post-checkout success page
+
+Founder reported three billing bugs after upgrading Aim Haircut from Free
+to Starter: (1) the post-checkout redirect landed on the old
+`chatx-rust.vercel.app/login` domain instead of `app.falahchat.com`, (2)
+the dashboard kept showing "Free" even though the upgrade had gone
+through, and (3) the success page was a placeholder with no order
+details.
+
+**Root cause of (2), the real bug:** there was no Stripe webhook endpoint
+registered at all -- confirmed via the Stripe API (`webhookEndpoints.list()`
+returned zero results). The `STRIPE_WEBHOOK_SECRET` sitting in Vercel was a
+leftover from a local `stripe listen` CLI session months ago, which was
+flagged as still-needed setup in an earlier changelog entry but never
+actually completed. With no endpoint, Stripe had nowhere to tell the app
+"this business just upgraded," so `businesses.plan` never updated no
+matter how many times the founder paid. This also caused a real side
+effect: retrying the upgrade after the first attempt appeared to silently
+fail created a **second, independent Stripe subscription and customer**
+for the same business, since the checkout route's own duplicate-subscription
+guard only engages once `stripe_subscription_id` is already on file --
+which it never was, for the same reason.
+
+**Root cause of (1):** `NEXT_PUBLIC_APP_URL` in Vercel's production
+environment was still set to the old `chatx-rust.vercel.app` domain from
+before `app.falahchat.com` was connected -- this is what `/api/checkout`
+uses to build Stripe's `success_url`/`cancel_url`.
+
+**Fixed:**
+- Registered a permanent webhook endpoint in Stripe (test mode, matching
+  the account's current setup) at `https://app.falahchat.com/api/webhooks/stripe`,
+  listening for the same six event types the handler already supports.
+- Cancelled the duplicate test-mode subscription/customer Aim Haircut ended
+  up with, and manually synced its business row to the real, surviving
+  subscription -- `plan: starter`, correct `stripe_customer_id`/
+  `stripe_subscription_id` -- mirroring the exact recovery method already
+  used for other businesses hit by this same gap in the past.
+- Rebuilt `/checkout/success` (`src/app/checkout/success/page.tsx`) to
+  read the actual order back from Stripe using the `session_id` query
+  param (plan name, amount, next renewal date) rather than showing a
+  generic placeholder -- deliberately reads from Stripe directly rather
+  than the business row, since that row's accuracy depends on webhook
+  timing (or, as this bug showed, on the webhook existing at all). Checks
+  the session's `metadata.business_id` against the logged-in business
+  before showing anything, since a `session_id` is guessable and this
+  page must not leak another business's billing details.
+
+**Still needs a manual step:** the Vercel CLI's `vercel env` commands are
+hard-blocked for this agent regardless of confirmation (a safety boundary,
+not a bug) -- so `STRIPE_WEBHOOK_SECRET` and `NEXT_PUBLIC_APP_URL` still
+need to be updated by hand in the Vercel dashboard before this is fully
+live. The real webhook signing secret is saved locally at
+`C:\Users\SAJIDU~1\AppData\Local\Temp\stripe-webhook-secret.txt` for the
+founder to paste in, then delete.
+
+**Verified:** ran a full real Stripe test-mode checkout end-to-end via
+Playwright (Stripe's own test card 4242 4242 4242 4242) against a fresh
+free-plan business -- landed on `/checkout/success` showing "Plan:
+Starter, Amount: $19.00 / month, Renews on: September 24, 2026" pulled
+live from Stripe. Separately confirmed a second business logged in and
+reusing the first business's real `session_id` gets the generic fallback
+message, not the Starter plan's billing details -- the ownership check
+holds. `npx tsc --noEmit` and `npm run build` both clean. Not yet
+deployed -- deploying now, but the plan-update fix won't be fully live
+until the founder updates the two env vars by hand.
+
 ## 2026-08-24 — Fixed the chat AI still trying to book on non-Pro plans; locked the Booking rules field to Pro
 
 Founder tested a free-plan account's live chat widget and asked it to book
