@@ -3,6 +3,85 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Faster replies, real request-time bug fix, and widget polish (online bubble, minimize, cursors)
+
+Founder asked for faster AI replies, a nicer/faster message animation, a
+proactive "we're online" notification, a pointer cursor on click, and a
+minimize option for the chat window. ("Move option" is still open --
+asked the founder what that specifically means before building it, since
+it could mean a draggable window or a configurable docked position and
+the wrong guess would be wasted work.)
+
+**Real latency, not just perceived.** Profiled the live production
+`/api/chat` endpoint directly rather than guessing: a real request was
+taking 5-13 seconds server-side, while Voyage embedding (~550ms) and the
+Claude call (~1.7s) measured in isolation only account for ~2.3s of that.
+Traced the gap to `respond.ts` running several independent Supabase
+queries one after another that don't actually depend on each other's
+results -- business lookup + session lookup, the visitor-message insert +
+session-timestamp update, and (the biggest one) knowledge retrieval + lead
+lookup + plan-limits lookup + conversation history, four independent reads
+that were each waiting for the previous one to finish for no reason.
+Restructured all three groups into `Promise.all` calls. No behavior
+changed -- confirmed with a real multi-turn conversation against the
+trained demo business afterward, replies still correct, still on-persona,
+still remembering earlier turns.
+
+**Perceived latency, too.** The artificial human-typing-delay simulation
+in `pacing.ts` (added in an earlier phase to make replies feel less like a
+robot instantly dumping text) was tuned for realism over speed --
+30ms/character with a 3.5s per-chunk cap meant a multi-chunk reply could
+add several extra seconds on top of actual generation time. Cut to
+8ms/character with a 1.1s cap -- still a brief, natural-feeling pause, not
+an instant unnatural dump, but far less added latency.
+
+**Message animation:** each chat bubble now fades and slides in
+(`animate-message-in`, mirroring the existing `page-in` pattern in
+globals.css) instead of appearing abruptly.
+
+**"We're online" proactive bubble:** a dismissible callout appears near
+the closed launcher a couple seconds after a brand-new visitor lands on
+the page (skipped for a returning visitor who already has a session),
+auto-hiding after 10 seconds if ignored. Building and testing this
+surfaced a real bug: the bubble was originally absolutely positioned,
+which doesn't contribute to a parent element's measured size -- and this
+whole widget lives inside an iframe that the host page resizes to exactly
+match the widget's own reported content box (see `embed.js`). An iframe
+hard-clips to its own box no matter what CSS is inside it, so the bubble
+was invisible in the real embedded context despite rendering correctly in
+isolation. Confirmed by testing against the actual `embed.js` mechanism on
+a mock host page (`scripts/host-test-page.html`'s pattern), not just the
+standalone `/widget/[id]` preview route, which has no iframe to clip
+against and so hid the bug entirely. Fixed by making the bubble a normal
+document-flow sibling instead of absolutely positioned -- and then found a
+second instance of the same root cause: the container's `flex flex-col`
+stretched to the iframe's current (too-narrow) width instead of sizing to
+its own content, because a block-level flex container fills its
+containing block by default; changed to `inline-flex` to restore the
+shrink-to-fit sizing the original `inline-block` container relied on.
+
+**Minimize:** added a distinct minimize icon in the header alongside the
+existing close (X) -- both collapse back to the launcher bubble, since
+there's no separate "end conversation" concept in this widget for them to
+differ on.
+
+**Pointer cursor:** added explicit `cursor-pointer` to every clickable
+element in the widget (launcher, minimize/close, starter prompts, send,
+dismiss). Root cause: Tailwind v4's preflight reset no longer defaults
+buttons to `cursor: pointer` the way v3's did, so every custom button in
+this app was relying on the browser's plain default cursor.
+
+**Verified:** re-ran the exact isolated Voyage/Claude timing tests plus
+the full API round-trip against local dev and against production directly
+(multiple runs each, since serverless/dev timing is noisy) to confirm
+where time was actually going before choosing what to fix, rather than
+guessing. Tested the greeting bubble, minimize button, and iframe resizing
+against the real `embed.js` mechanism specifically (not the standalone
+preview page) after finding the sizing bug there. Ran a full real
+multi-turn conversation through the parallelized `respond.ts` to confirm
+no behavior regression. `npx tsc --noEmit` and `npm run build` both
+clean. Deploying now.
+
 ## 2026-08-25 — App root now redirects instead of showing a static placeholder
 
 Founder noticed `app.falahchat.com/` showed a bare "Sign up / Log in"

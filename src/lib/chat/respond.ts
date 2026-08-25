@@ -27,27 +27,33 @@ export async function respondToVisitorMessage(params: {
 }): Promise<RespondResult> {
   const admin = createAdminClient();
 
-  const { data: business } = await admin
-    .from("businesses")
-    .select("id, name, plan, status, past_due_at, system_prompt, google_refresh_token, google_calendar_id, timezone")
-    .eq("id", params.businessId)
-    .single();
+  // The business fetch and the existing-session lookup don't depend on each
+  // other's result -- running them together instead of one after another
+  // saves a full round trip for the common case of a returning visitor
+  // continuing an existing session (a real, measurable chunk of this
+  // request's total latency, confirmed by profiling the live production
+  // endpoint end to end).
+  const [{ data: business }, { data: existingSession }] = await Promise.all([
+    admin
+      .from("businesses")
+      .select("id, name, plan, status, past_due_at, system_prompt, google_refresh_token, google_calendar_id, timezone")
+      .eq("id", params.businessId)
+      .single(),
+    params.sessionId
+      ? admin
+          .from("chat_sessions")
+          .select("id, controlled_by")
+          .eq("id", params.sessionId)
+          .eq("business_id", params.businessId)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
 
   if (!business) throw new Error("Business not found");
 
   // --- Resolve or create the chat session ---
-  let sessionId = params.sessionId;
-  let controlledBy: "ai" | "human" = "ai";
-  if (sessionId) {
-    const { data: existing } = await admin
-      .from("chat_sessions")
-      .select("id, controlled_by")
-      .eq("id", sessionId)
-      .eq("business_id", params.businessId)
-      .maybeSingle();
-    if (!existing) sessionId = undefined;
-    else controlledBy = existing.controlled_by;
-  }
+  let sessionId = existingSession ? params.sessionId : undefined;
+  let controlledBy: "ai" | "human" = existingSession?.controlled_by ?? "ai";
   if (!sessionId) {
     const { data: created, error } = await admin
       .from("chat_sessions")
@@ -85,14 +91,13 @@ export async function respondToVisitorMessage(params: {
 
   // Record the visitor's message regardless of quota/restriction outcome --
   // it's a real message that was sent, even if it doesn't get an AI reply.
-  await admin
-    .from("chat_messages")
-    .insert({ session_id: resolvedSessionId, role: "visitor", content: params.message });
+  // Independent writes (neither reads the other's result), so they run
+  // concurrently rather than as two sequential round trips.
   const nowIso = new Date().toISOString();
-  await admin
-    .from("chat_sessions")
-    .update({ last_message_at: nowIso, last_visitor_message_at: nowIso })
-    .eq("id", resolvedSessionId);
+  await Promise.all([
+    admin.from("chat_messages").insert({ session_id: resolvedSessionId, role: "visitor", content: params.message }),
+    admin.from("chat_sessions").update({ last_message_at: nowIso, last_visitor_message_at: nowIso }).eq("id", resolvedSessionId),
+  ]);
 
   // Billing restriction takes priority over the message quota -- a
   // cancelled/grace-period-expired business shouldn't be able to use the
@@ -138,13 +143,26 @@ export async function respondToVisitorMessage(params: {
     };
   }
 
-  // --- Retrieval ---
-  const queryEmbedding = await embedQuery(params.message);
-  const { data: chunks } = await admin.rpc("match_knowledge_chunks", {
-    p_business_id: params.businessId,
-    p_query_embedding: JSON.stringify(queryEmbedding),
-    p_match_count: MATCH_COUNT,
-  });
+  // --- Retrieval, plus everything else needed for this turn ---
+  // None of these four depend on each other's result, only on data already
+  // in hand (resolvedSessionId, business.plan) -- confirmed via direct
+  // production profiling that running them one after another (as this
+  // originally did) was a real, measurable chunk of total reply latency.
+  // The embed-then-match pair is still sequential internally (match needs
+  // the embedding), but that pair now runs concurrently with the other
+  // three lookups instead of blocking them.
+  const [{ data: chunks }, { data: lead }, { data: planLimits }, { data: priorMessages }] = await Promise.all([
+    embedQuery(params.message).then((queryEmbedding) =>
+      admin.rpc("match_knowledge_chunks", {
+        p_business_id: params.businessId,
+        p_query_embedding: JSON.stringify(queryEmbedding),
+        p_match_count: MATCH_COUNT,
+      })
+    ),
+    admin.from("leads").select("name, email").eq("session_id", resolvedSessionId).maybeSingle(),
+    admin.from("plan_limits").select("booking_enabled").eq("plan", business.plan).single(),
+    admin.from("chat_messages").select("role, content").eq("session_id", resolvedSessionId).order("created_at", { ascending: true }),
+  ]);
 
   const knowledgeSection =
     chunks && chunks.length > 0
@@ -182,8 +200,7 @@ export async function respondToVisitorMessage(params: {
   // The intake form already collected the visitor's name/email before this
   // conversation started -- fetched fresh each turn (not just read from
   // params.lead) so the AI still knows it on turn 2, 3, etc., not only the
-  // turn that happened to submit it.
-  const { data: lead } = await admin.from("leads").select("name, email").eq("session_id", resolvedSessionId).maybeSingle();
+  // turn that happened to submit it. (Fetched above, alongside retrieval.)
   const leadContext = lead
     ? `The visitor already gave their name (${lead.name}) and email (${lead.email}) on an intake form before this conversation started -- feel free to address them by name, and don't ask for this again.`
     : "";
@@ -215,12 +232,8 @@ export async function respondToVisitorMessage(params: {
   // idea it's missing one, so it keeps behaving as if a booking is in
   // progress (asking for a preferred date/time/service) right up until the
   // moment it would have called a tool that was never offered to it -- a
-  // real bug a customer hit on a free-plan business's widget.
-  const { data: planLimits } = await admin
-    .from("plan_limits")
-    .select("booking_enabled")
-    .eq("plan", business.plan)
-    .single();
+  // real bug a customer hit on a free-plan business's widget. (Fetched
+  // above, alongside retrieval.)
   const bookingReady = Boolean(planLimits?.booking_enabled && business.google_refresh_token && business.google_calendar_id);
   const noBookingContext = !bookingReady
     ? "You cannot book, reschedule, or cancel appointments through this chat right now -- that capability isn't available for this business at the moment. If a customer asks to book, do not ask for their preferred date, time, or service as if a booking is in progress. Instead, let them know you can't book directly through chat, and if you know this business's phone number or email (only if you actually know it from what you've been trained on), share it as the way to book. If you don't know a phone number or email, just apologize and say you're not able to book directly right now."
@@ -232,12 +245,7 @@ export async function respondToVisitorMessage(params: {
       .join("\n\n") + knowledgeSection;
 
   // --- Conversation history, oldest first, mapped to Claude's roles ---
-  const { data: priorMessages } = await admin
-    .from("chat_messages")
-    .select("role, content")
-    .eq("session_id", resolvedSessionId)
-    .order("created_at", { ascending: true });
-
+  // (Fetched above, alongside retrieval.)
   const rawHistory: ChatTurn[] = (priorMessages ?? []).map((m) => ({
     role: m.role === "visitor" ? "user" : "assistant",
     content: m.content,

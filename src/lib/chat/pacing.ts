@@ -3,10 +3,10 @@
 // proportional to its length, not fixed -- both are Phase 3 requirements.
 
 const MAX_CHUNK_CHARS = 160;
-const MIN_DELAY_MS = 500;
-const MAX_DELAY_MS = 3500;
-const MS_PER_CHAR = 30;
-const BASE_DELAY_MS = 300;
+const MIN_DELAY_MS = 250;
+const MAX_DELAY_MS = 1100;
+const MS_PER_CHAR = 8;
+const BASE_DELAY_MS = 150;
 
 /** Splits reply text into sentence-grouped chunks, each a short chat bubble. */
 export function splitIntoMessages(text: string): string[] {

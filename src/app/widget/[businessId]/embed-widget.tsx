@@ -74,6 +74,7 @@ export function EmbedWidget({
   assistantPhotoUrl: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [showGreeting, setShowGreeting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -144,6 +145,23 @@ export function EmbedWidget({
       })
       .finally(() => setHistoryLoaded(true));
   }, [businessId]);
+
+  // A proactive "we're online" bubble, like a real receptionist waving --
+  // only for a brand-new visitor (an existing session means they've already
+  // met the widget before) and only once they've been on the page a moment,
+  // not the instant it loads. Auto-dismisses on its own after a while rather
+  // than sitting there forever if it's ignored.
+  useEffect(() => {
+    if (sessionIdRef.current) return;
+    const showTimer = setTimeout(() => setShowGreeting(true), 2500);
+    return () => clearTimeout(showTimer);
+  }, [businessId]);
+
+  useEffect(() => {
+    if (!showGreeting) return;
+    const hideTimer = setTimeout(() => setShowGreeting(false), 10000);
+    return () => clearTimeout(hideTimer);
+  }, [showGreeting]);
 
   useEffect(() => {
     // See the same fix in the dashboard's test-chat widget: skip the
@@ -319,28 +337,66 @@ export function EmbedWidget({
 
   if (!open) {
     return (
-      <div ref={rootRef} className="relative inline-block p-3">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Open chat"
-          className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-brand-500 shadow-lg shadow-brand-500/30 transition-transform hover:scale-105"
-        >
-          {assistantPhotoUrl ? (
-            <Image src={assistantPhotoUrl} alt={assistantName || "Chat"} width={64} height={64} className="h-full w-full object-cover" unoptimized />
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" className="h-7 w-7 text-white">
-              <path
-                d="M4 4h16v12H7l-3 3V4z"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
-        </button>
-        <span className="absolute bottom-3.5 right-3.5 h-4 w-4 rounded-full border-[3px] border-white bg-brand-400" />
+      // flex-col + normal document flow (not absolute positioning) for the
+      // greeting bubble is deliberate -- this whole tree is loaded inside an
+      // iframe that the host page resizes to exactly match its measured
+      // content box (see postSizeToParent below and embed.js). An
+      // absolutely-positioned child doesn't contribute to its parent's
+      // getBoundingClientRect(), so the iframe would never actually grow to
+      // show it -- an iframe hard-clips to its own box regardless of any
+      // CSS overflow inside it. Confirmed directly against the real embed.js
+      // mechanism, not just the standalone /widget preview page (which has
+      // no iframe to clip against and so hid this bug).
+      <div ref={rootRef} className="inline-flex flex-col items-end gap-2 p-3">
+        {showGreeting && (
+          <div className="animate-bubble-pop-in relative flex w-64 items-start gap-2 rounded-2xl rounded-br-md bg-white p-3.5 pr-8 text-left shadow-2xl">
+            <span className="relative mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-brand-500">
+              <span className="absolute inset-0 animate-ping rounded-full bg-brand-500" />
+            </span>
+            <p className="text-sm text-gray-700">
+              <span className="font-semibold text-gray-900">We&apos;re online!</span> Chat with {assistantName || "us"} now.
+            </p>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowGreeting(false);
+              }}
+              aria-label="Dismiss"
+              className="absolute right-2 top-2 cursor-pointer rounded-full p-1 text-gray-300 hover:bg-gray-100 hover:text-gray-500"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(true);
+              setShowGreeting(false);
+            }}
+            aria-label="Open chat"
+            className="flex h-16 w-16 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-brand-500 shadow-lg shadow-brand-500/30 transition-transform hover:scale-105"
+          >
+            {assistantPhotoUrl ? (
+              <Image src={assistantPhotoUrl} alt={assistantName || "Chat"} width={64} height={64} className="h-full w-full object-cover" unoptimized />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" className="h-7 w-7 text-white">
+                <path
+                  d="M4 4h16v12H7l-3 3V4z"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </button>
+          <span className="absolute bottom-3.5 right-3.5 h-4 w-4 rounded-full border-[3px] border-white bg-brand-400" />
+        </div>
       </div>
     );
   }
@@ -372,16 +428,28 @@ export function EmbedWidget({
               <span className="text-xs text-gray-400">Online</span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            aria-label="Close chat"
-            className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Minimize chat"
+              className="cursor-pointer rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                <path d="M6 12h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Close chat"
+              className="cursor-pointer rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {!historyLoaded ? null : !leadCaptured ? (
@@ -431,7 +499,7 @@ export function EmbedWidget({
                   key={prompt}
                   type="button"
                   onClick={() => setLeadMessage(prompt)}
-                  className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                  className="cursor-pointer rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
                 >
                   {prompt}
                 </button>
@@ -440,7 +508,7 @@ export function EmbedWidget({
             <button
               type="submit"
               disabled={sending || !leadName.trim() || !leadEmail.trim() || !leadMessage.trim()}
-              className="rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+              className="cursor-pointer rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Start chat
             </button>
@@ -451,13 +519,13 @@ export function EmbedWidget({
               {messages.map((m, i) => (
                 <div
                   key={i}
-                  className={
+                  className={`animate-message-in ${
                     m.role === "visitor"
                       ? "ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-brand-500 px-3.5 py-2.5 text-sm text-white"
                       : m.role === "system"
                         ? "mx-auto max-w-[90%] rounded-xl bg-yellow-50 px-3 py-2 text-center text-xs text-yellow-800"
                         : "mr-auto max-w-[80%] rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900"
-                  }
+                  }`}
                 >
                   {m.content}
                 </div>
@@ -483,7 +551,7 @@ export function EmbedWidget({
                 type="submit"
                 disabled={!input.trim()}
                 aria-label="Send message"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white transition-colors hover:bg-brand-600 disabled:opacity-40"
+                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-brand-500 text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px] translate-x-[1px]">
                   <path d="M4 12l16-8-6 8 6 8-16-8z" fill="currentColor" />
