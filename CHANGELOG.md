@@ -3,6 +3,60 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Draggable chat window; found the real production latency bottleneck
+
+Two follow-ups to the widget/speed work from earlier today.
+
+**Draggable chat window.** Founder confirmed "move option" meant a
+visitor can click-and-drag the open panel to reposition it during their
+session (not a business-configurable launcher corner). The widget lives
+inside an iframe positioned by `embed.js` on the host page -- the React
+app inside it has no way to move that iframe itself, so dragging works by
+posting position deltas via `postMessage` and having `embed.js` actually
+reposition the real element (the same pattern already used for resizing).
+Drag handle is the header's name/photo area specifically, not the whole
+header bar, so it never intercepts a click on the minimize/close buttons
+right next to it. Mouse-only for now, no touch handlers.
+
+Found a real bug while testing this with actual mouse simulation, not
+just inspecting markup: using a delta measured from the drag's starting
+point (`clientX - startX`) made the panel visibly lag to about half the
+real cursor movement. Root cause: the iframe itself moves as a *result*
+of the drag, which shifts what any position *inside* the iframe's own
+coordinate space means for the same real on-screen cursor spot mid-drag --
+a start-relative delta is measured against a coordinate frame that's
+quietly moving underneath it. Fixed by using `movementX`/`movementY`
+(the per-tick delta since the last mousemove event) instead, which stays
+valid regardless of where the iframe currently sits. Confirmed the exact
+lag numerically before and after (was landing at roughly half the real
+drag distance; lands exactly on distance now, correctly clamped when it
+hits a viewport edge) and confirmed minimize/reopen still behave
+correctly after a drag.
+
+**Found the real bottleneck behind the remaining chat latency.** The
+`respond.ts` parallelization from earlier today helped, but production
+was still measuring 4-8+ seconds end to end -- more than Voyage (~550ms)
+and Claude (~1.7s) account for on their own. Added temporary
+`console.log` timing checkpoints, deployed, sent one real request, and
+read the actual production logs rather than continuing to guess. Result:
+the Claude call is genuinely ~1.8s (already about as fast as reasonably
+achievable at this quality/model), each individual Supabase round trip is
+costing 200-700ms (high for same-region, pointing at a real Vercel/
+Supabase region mismatch worth the founder's own look), and roughly 2.4s
+sits outside the app code entirely, consistent with a Vercel serverless
+cold start on a low-traffic function. Removed the temporary instrumentation
+after diagnosis -- production is back to clean code, this is a finding to
+share, not something silently fixed, since closing the remaining gap means
+an infrastructure decision (region alignment, or paying for functions that
+stay warm) rather than an application code change.
+
+**Verified:** the movementX/Y fix with real Playwright mouse simulation
+(not synthetic position jumps) against the actual `embed.js` mechanism,
+confirming exact pixel-for-pixel drag distance and correct edge clamping.
+Confirmed the diagnostic instrumentation was fully removed and production
+was redeployed clean before finishing. `npx tsc --noEmit` and
+`npm run build` both clean. Deploying now.
+
 ## 2026-08-25 — Faster replies, real request-time bug fix, and widget polish (online bubble, minimize, cursors)
 
 Founder asked for faster AI replies, a nicer/faster message animation, a

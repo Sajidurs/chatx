@@ -335,6 +335,33 @@ export function EmbedWidget({
     await sendMessage(message, { name, email });
   }
 
+  // The widget can't move its own iframe from inside -- that element lives
+  // on the host page, entirely outside this document's reach -- so dragging
+  // works by posting position deltas to the parent (embed.js) and letting
+  // it actually reposition the real iframe element. Mouse-only for now
+  // (no touch handlers); the drag handle is the header's name/photo area
+  // specifically, not the whole header bar, so it never intercepts a click
+  // on the minimize/close buttons next to it.
+  function startDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    window.parent.postMessage({ source: "chatx-widget", type: "dragStart" }, "*");
+
+    // Per-tick movement (movementX/Y), not a running delta from where the
+    // drag started -- the iframe itself moves as a result of this drag, so
+    // a start-relative delta would be measured against a coordinate frame
+    // that's shifting underneath it. See the matching note in embed.js for
+    // the exact lag this caused when it was start-relative.
+    function handleMove(ev: MouseEvent) {
+      window.parent.postMessage({ source: "chatx-widget", type: "drag", dx: ev.movementX, dy: ev.movementY }, "*");
+    }
+    function handleUp() {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }
+
   if (!open) {
     return (
       // flex-col + normal document flow (not absolute positioning) for the
@@ -405,7 +432,10 @@ export function EmbedWidget({
     <div ref={rootRef} className="inline-block p-3">
       <div className="flex h-[600px] w-[370px] flex-col overflow-hidden rounded-3xl border border-gray-100 bg-white text-gray-900 shadow-2xl">
         <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-3.5">
-          <div className="flex items-center gap-2.5">
+          <div
+            onMouseDown={startDrag}
+            className="flex flex-1 cursor-grab select-none items-center gap-2.5 active:cursor-grabbing"
+          >
             <div className="relative shrink-0">
               {assistantPhotoUrl ? (
                 <Image
