@@ -4,6 +4,12 @@
 // request) once the URL already carries a stale query string. The
 // knowledge (training documents) page had this same combination.
 //
+// The upload UI itself was later redesigned (a styled dropzone + real
+// progress bar, uploading via XHR to a plain API route instead of a form
+// action) -- this now targets the hidden file input the dropzone drives,
+// but the regression it guards is the same: upload still has to work with a
+// stale query string already in the URL.
+//
 // Usage: node --env-file=.env.local scripts/verify-knowledge-upload-fix.mjs
 // Requires: npm run dev already running on http://localhost:3000.
 
@@ -55,9 +61,10 @@ try {
     mimeType: "text/plain",
     buffer: Buffer.from("This is a real test knowledge document about our return policy."),
   });
-  await page.click('button:has-text("Upload")');
-  await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(5000);
+  await page.getByText("test.txt").waitFor({ state: "visible", timeout: 5000 });
+  await page.click('button:has-text("Upload document")');
+  await page.getByText("Uploaded", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.waitForTimeout(2000); // let the background processKnowledgeSource() finish
 
   const { data: sources } = await admin.from("knowledge_sources").select("*").eq("business_id", bizId);
   check("document upload actually ran despite the stale query string", (sources ?? []).length === 1, JSON.stringify(sources));

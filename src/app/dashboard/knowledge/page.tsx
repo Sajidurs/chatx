@@ -1,8 +1,9 @@
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 import { createClient } from "@/lib/supabase/server";
-import { uploadKnowledgeSource, deleteKnowledgeSource } from "./actions";
+import { deleteKnowledgeSource } from "./actions";
 import { PageHeader, Card } from "../ui";
 import { ErrorBanner } from "../confirm-banners";
+import { FileUploadDropzone } from "../file-upload-dropzone";
 
 const STATUS_STYLES: Record<string, string> = {
   ready: "text-brand-700",
@@ -31,12 +32,14 @@ export default async function KnowledgePage() {
       <ErrorBanner />
 
       <Card>
-        <form action={uploadKnowledgeSource} className="flex items-center gap-3">
-          <input type="file" name="file" accept=".pdf,.doc,.docx,.txt,.md" required className="flex-1 text-sm text-gray-600" />
-          <button type="submit" className="shrink-0 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600">
-            Upload
-          </button>
-        </form>
+        <FileUploadDropzone
+          uploadUrl="/api/dashboard/knowledge/upload"
+          fieldName="file"
+          accept=".pdf,.doc,.docx,.txt,.md"
+          maxBytes={15 * 1024 * 1024}
+          helpText="PDF, Word (.docx), or plain text -- up to 15MB"
+          buttonLabel="Upload document"
+        />
       </Card>
 
       <Card className="!p-2">

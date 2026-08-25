@@ -3,6 +3,54 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Redesigned the training document and assistant photo upload UI
+
+Founder reported real confusion on the "Training documents" and "Assistant
+setup" pages: the raw browser file input ("Choose File / No file chosen")
+gave no feedback after picking a file, and it wasn't obvious where to even
+click. Requested: a way to quickly upload a file, see what's being uploaded
+with a progress bar, then save.
+
+**What was built:** A new reusable `FileUploadDropzone` component used on
+both pages --
+
+- A clearly-clickable dashed-border box ("Click to upload or drag and
+  drop") instead of the native file picker control.
+- Picking a file (click or drag-drop) immediately shows its name and size,
+  with a way to remove/change it before uploading.
+- An explicit "Upload document" / "Save photo" button, so nothing uploads
+  by accident.
+- A real progress bar driven by the browser's actual upload progress
+  (XMLHttpRequest `upload.onprogress`), not a fake animation.
+- An inline "Uploaded" success state, then the dropzone resets itself so
+  the next file can go right away -- no page reload needed.
+
+**Decision made:** Server Actions (`<form action={fn}>`) can't expose
+real upload-progress events to the browser, so both upload flows moved from
+a form-action submission to a plain `fetch`/XHR call against two new JSON
+API routes (`/api/dashboard/knowledge/upload`, `/api/dashboard/onboarding/photo`)
+that do exactly what the old server actions did (same validation, same
+Supabase Storage upload, same DB write), just returning JSON instead of
+redirecting. The old `uploadKnowledgeSource` / `uploadAssistantPhoto` server
+actions were removed rather than left unused. After a successful upload the
+component calls `router.refresh()`, so the document list / photo preview
+update from the real server data -- not a client-side guess -- without a
+full page reload.
+
+**Verified (real Playwright browser, real Supabase Storage):**
+`scripts/verify-upload-dropzone-ux.mjs` -- **15/15 checks passed**: the
+dropzone is clearly clickable; an oversized file is rejected client-side
+before any network call; a selected file's name and size display; the
+remove button clears a selection without uploading; a progress bar appears
+during upload; an "Uploaded" state shows after; the URL never changes
+(confirming this is a background upload, not a full-page form submission);
+the dropzone auto-resets for the next file; the new document/photo appears
+via `router.refresh()` alone; the database was actually updated in both
+cases. The two existing regression tests for the unrelated stale-query-string
+bug (`verify-knowledge-upload-fix.mjs`, `verify-onboarding-photo-fix.mjs`)
+were updated to the new selectors and both still pass. Test data cleaned up
+afterward in all three runs.
+
 ## 2026-08-25 — Image understanding: visitors can now attach a photo and the AI reads it
 
 New feature request: if a customer sends a photo in the chat, the AI should

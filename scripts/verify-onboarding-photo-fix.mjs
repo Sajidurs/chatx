@@ -8,6 +8,14 @@
 // useSearchParams() independently, keeping the page itself free of a
 // searchParams prop.
 //
+// The photo upload UI itself was later redesigned (a styled dropzone + real
+// progress bar, uploading via XHR to a plain API route instead of a form
+// action, with its own inline "Uploaded" state instead of the shared
+// ?saved=photo banner) -- this now targets the hidden file input the
+// dropzone drives and its inline success text, but the regression it guards
+// is the same: upload still has to work with a stale query string already
+// in the URL.
+//
 // Usage: node --env-file=.env.local scripts/verify-onboarding-photo-fix.mjs
 // Requires: npm run dev already running on http://localhost:3000.
 
@@ -61,9 +69,9 @@ try {
       "base64"
     ),
   });
-  await page.click('button:has-text("Upload photo")');
-  await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(5000);
+  await page.getByText("avatar.png").waitFor({ state: "visible", timeout: 5000 });
+  await page.click('button:has-text("Save photo")');
+  await page.getByText("Uploaded", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
 
   const { data: bizAfter } = await admin.from("businesses").select("assistant_photo_url").eq("id", bizId).single();
   check(
@@ -73,10 +81,12 @@ try {
   );
 
   const text = await page.evaluate(() => document.body.innerText);
-  check("photo save confirmation shown", text.includes("Photo saved"), null);
+  check("photo save confirmation shown", text.includes("Uploaded"), null);
 } finally {
   await browser.close();
   if (bizId) {
+    const { data: files } = await admin.storage.from("assistant-photos").list(bizId);
+    if (files?.length) await admin.storage.from("assistant-photos").remove(files.map((f) => `${bizId}/${f.name}`));
     await admin.from("business_users").delete().eq("business_id", bizId);
     await admin.from("businesses").delete().eq("id", bizId);
   }

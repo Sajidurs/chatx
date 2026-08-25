@@ -1,8 +1,9 @@
 import Image from "next/image";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
-import { generateFromQuestionnaire, saveSystemPrompt, saveTimezone, uploadAssistantPhoto } from "./actions";
+import { generateFromQuestionnaire, saveSystemPrompt, saveTimezone } from "./actions";
 import { PageHeader, Card } from "../ui";
 import { SavedBanner, ErrorBanner } from "../confirm-banners";
+import { FileUploadDropzone } from "../file-upload-dropzone";
 import { TIMEZONES } from "@/lib/timezones";
 
 const inputClass =
@@ -32,7 +33,6 @@ export default async function OnboardingPage() {
 
       <Card className="flex flex-col gap-3">
         <h2 className="font-semibold">Photo</h2>
-        <SavedBanner value="photo">Photo saved.</SavedBanner>
         <div className="flex items-center gap-4">
           {business.assistant_photo_url ? (
             <Image src={business.assistant_photo_url} alt="Assistant photo" width={64} height={64} className="rounded-full object-cover" unoptimized />
@@ -40,15 +40,19 @@ export default async function OnboardingPage() {
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400">No photo</div>
           )}
           {isOwner && (
-            <form action={uploadAssistantPhoto} className="flex items-center gap-2">
-              <input type="file" name="photo" accept="image/png,image/jpeg,image/webp" required className="text-sm" />
-              <button type="submit" className="rounded-xl border border-gray-200 px-3.5 py-2 text-sm hover:bg-gray-50">
-                Upload photo
-              </button>
-            </form>
+            <FileUploadDropzone
+              uploadUrl="/api/dashboard/onboarding/photo"
+              fieldName="photo"
+              accept="image/png,image/jpeg,image/webp"
+              maxBytes={8 * 1024 * 1024}
+              helpText="PNG, JPEG, or WebP -- up to 8MB"
+              buttonLabel="Save photo"
+              compact
+              className="w-64"
+            />
           )}
         </div>
-        <p className="text-xs text-gray-500">PNG, JPEG, or WebP, up to 8MB. This section saves independently of the other two below.</p>
+        <p className="text-xs text-gray-500">This section saves independently of the other two below.</p>
       </Card>
 
       <Card className="flex flex-col gap-3">

@@ -1,9 +1,7 @@
 "use server";
 
-import { randomUUID } from "crypto";
 import { redirect } from "next/navigation";
 import { getCurrentBusinessContext } from "@/lib/auth/current-business";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { generateSystemPrompt } from "@/lib/onboarding/generate-system-prompt";
 import { TIMEZONES } from "@/lib/timezones";
@@ -13,10 +11,12 @@ function fail(message: string): never {
 }
 
 // Each action redirects with its own `saved` value (not a shared generic
-// flag) so the page can say specifically what was saved -- three independent
-// forms sharing one vague "Saved." banner is exactly what caused confusion
-// about whether the photo had actually been saved when it hadn't.
-function saved(what: "persona" | "prompt" | "photo" | "timezone"): never {
+// flag) so the page can say specifically what was saved -- independent forms
+// sharing one vague "Saved." banner is exactly what caused confusion about
+// whether a given section had actually been saved when it hadn't. (The photo
+// section has its own inline "Uploaded" state now -- see
+// FileUploadDropzone -- so "photo" is no longer one of these.)
+function saved(what: "persona" | "prompt" | "timezone"): never {
   redirect(`/dashboard/onboarding?saved=${what}`);
 }
 
@@ -99,42 +99,4 @@ export async function saveTimezone(formData: FormData) {
 
   if (error) fail("Could not save. Please try again.");
   saved("timezone");
-}
-
-const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // 8MB -- raised from 5MB, which real photos/screenshots routinely exceed
-const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-
-export async function uploadAssistantPhoto(formData: FormData) {
-  const context = await getCurrentBusinessContext();
-  if (!context) redirect("/login");
-  if (context.role !== "owner") fail("Only the business owner can edit assistant setup.");
-
-  const file = formData.get("photo");
-  if (!(file instanceof File) || file.size === 0) fail("Please choose an image to upload.");
-  if (file.size > MAX_PHOTO_BYTES) {
-    fail(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB, max 8MB).`);
-  }
-  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-    fail(`Unsupported image type (${file.type || "unknown"}). Please upload a PNG, JPEG, or WebP image.`);
-  }
-
-  const admin = createAdminClient();
-  const extension = file.name.split(".").pop()?.toLowerCase() || "png";
-  const storagePath = `${context.business.id}/${randomUUID()}.${extension}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-
-  const { error: uploadError } = await admin.storage
-    .from("assistant-photos")
-    .upload(storagePath, buffer, { contentType: file.type });
-  if (uploadError) fail("Upload failed. Please try again.");
-
-  const { data: publicUrl } = admin.storage.from("assistant-photos").getPublicUrl(storagePath);
-
-  const { error } = await admin
-    .from("businesses")
-    .update({ assistant_photo_url: publicUrl.publicUrl })
-    .eq("id", context.business.id);
-  if (error) fail("Could not save the photo. Please try again.");
-
-  saved("photo");
 }
