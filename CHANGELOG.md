@@ -3,6 +3,62 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Found and fixed the "Something went wrong" chat error (root cause: Voyage AI rate limit)
+
+Founder's screenshot showed a real customer's message ("how much is that
+both?") get a one-off "Something went wrong. Please try again." error, then
+succeed instantly on an identical retry.
+
+**Root cause, confirmed from real production logs**
+(`vercel logs app.falahchat.com --level error`), not guessed:
+
+```
+Chat request failed i: Status code: 429 Body: { "detail": "You have not yet
+added your payment method in the billing page and will have reduced rate
+limits of 3 RPM and 10K TPM..." }
+```
+
+Every chat turn calls Voyage AI (the embeddings provider used for the
+knowledge-base/RAG lookup) once, to search the business's uploaded documents
+for anything relevant to the visitor's message. This chat account's Voyage
+project has no payment method on file, capping it at 3 requests per minute --
+a real, active conversation with several back-and-forth turns close together
+(availability check, booking, a follow-up question) can exceed that.
+
+The actual bug: that Voyage call was sitting unguarded inside the same
+`Promise.all` as everything else needed to reply. The retrieved documents
+are supplementary context, not essential to answering -- but when Voyage
+rejected the request, the whole turn failed outright with a generic error,
+instead of the assistant just answering from the system prompt and
+conversation history alone, without the extra document context for that one
+message.
+
+**Fix:** the knowledge-base lookup now degrades gracefully -- any failure
+(rate limit, timeout, Voyage outage) is caught and logged server-side, and
+the turn continues without retrieved documents rather than failing. A quick
+manual test with this exact prompt confirms the assistant handles it
+sensibly on its own ("I don't have our service list pulled up right now --
+could you tell me what you're looking for?") rather than looking broken.
+
+**Not fixed, flagging as a founder decision (costs money):** the underlying
+rate limit is still there -- this fix stops it from crashing a reply, but
+frequent Voyage failures still mean occasional replies without knowledge-base
+context. Adding a payment method to the Voyage account
+(https://dashboard.voyageai.com/) removes the 3 RPM cap entirely (Voyage's
+free token allowance still applies either way). This is a paid third-party
+service decision, so I didn't do it myself -- let me know if you'd like me to
+walk you through it.
+
+**Verified:** `scripts/verify-rag-failure-resilience.mjs` runs the dev
+server against a deliberately invalid Voyage API key (making every Voyage
+call fail, the same failure class as the real rate limit, without
+deliberately rate-limiting the real production account) and confirms a real
+chat request still returns 200 with a real assistant reply, and both
+messages are stored correctly. **4/4 checks passed**, and the server log
+confirmed the failure genuinely occurred and was caught (`Error
+[VoyageAIError]: Status code: 401`), not silently skipped. Test data cleaned
+up afterward.
+
 ## 2026-08-25 — Bookings now show which service was booked and context about the customer
 
 Founder's screenshots showed a confirmed booking in chat that clearly named

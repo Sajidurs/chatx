@@ -157,14 +157,27 @@ export async function respondToVisitorMessage(params: {
   const [{ data: chunks }, { data: lead }, { data: planLimits }, { data: priorMessages }] = await Promise.all([
     // Voyage rejects an empty string -- an image sent with no caption has
     // nothing to embed, so there's no knowledge-base query to run for it.
+    // The knowledge-base lookup is supplementary context, not essential to
+    // replying at all -- a transient Voyage/Supabase failure here (e.g. a
+    // 429 from Voyage's per-minute rate limit) must not take down the whole
+    // turn. A real production incident: this used to be unguarded inside
+    // the same Promise.all, so one Voyage rate-limit error failed the
+    // entire request with a generic "Something went wrong," even though the
+    // assistant could easily have answered from the system prompt and
+    // conversation history alone, just without the extra document context.
     params.message.trim()
-      ? embedQuery(params.message).then((queryEmbedding) =>
-          admin.rpc("match_knowledge_chunks", {
-            p_business_id: params.businessId,
-            p_query_embedding: JSON.stringify(queryEmbedding),
-            p_match_count: MATCH_COUNT,
+      ? embedQuery(params.message)
+          .then((queryEmbedding) =>
+            admin.rpc("match_knowledge_chunks", {
+              p_business_id: params.businessId,
+              p_query_embedding: JSON.stringify(queryEmbedding),
+              p_match_count: MATCH_COUNT,
+            })
+          )
+          .catch((err) => {
+            console.error("Knowledge-base retrieval failed; continuing without it", err);
+            return { data: null };
           })
-        )
       : Promise.resolve({ data: null }),
     admin.from("leads").select("name, email").eq("session_id", resolvedSessionId).maybeSingle(),
     admin.from("plan_limits").select("booking_enabled").eq("plan", business.plan).single(),
