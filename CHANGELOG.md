@@ -3,6 +3,79 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Image understanding: visitors can now attach a photo and the AI reads it
+
+New feature request: if a customer sends a photo in the chat, the AI should
+actually look at it and answer accordingly (e.g. "is this hairstyle something
+you offer?" with a picture attached).
+
+**What was built:**
+
+- A paperclip/attach button next to the message input (only shown once the
+  visitor has started a conversation). Picking an image shows an instant
+  local preview, uploads it in the background, and only enables Send once
+  the upload finishes -- a caption is optional, an image alone is a valid
+  message.
+- New `POST /api/chat/upload-image` endpoint: validates file type (PNG/JPEG/
+  WebP/GIF only) and size (8MB max, same ceiling as the existing
+  assistant-photo upload), then stores it in a new public `chat-images`
+  Supabase Storage bucket, namespaced by business id.
+- `chat_messages` gained an `image_url` column. The AI (`claude.ts`) now
+  sends the image as a real vision content block alongside the text, using
+  Claude's `{type: "image", source: {type: "url", ...}}` format -- confirmed
+  against the current API shape (not assumed from training) since this is an
+  area known to drift between model versions.
+- Images persist through conversation history: reload the page, and past
+  images still render, both for the visitor and (implicitly, since it's the
+  same message table) anywhere else messages are read.
+- The reply style guardrail added earlier today (short, conversational,
+  human-style) applies to image replies too -- the AI describes what it
+  actually sees, in the same brief tone as any other answer, not a formal
+  image-captioning block.
+
+**Decisions made:**
+
+- **Security: only our own uploaded images are ever sent to Claude.**
+  `/api/chat` only accepts an `imageUrl` that starts with our own Supabase
+  Storage public URL prefix -- anything else is silently dropped. Without
+  this, the public, unauthenticated `/api/chat` endpoint could be used by
+  anyone as a free, business-costs-billed image-analysis proxy by pointing
+  `imageUrl` at an arbitrary picture anywhere on the internet. This wasn't
+  explicitly asked for, but leaving it open would have been a real abuse
+  vector on a public endpoint, so I closed it without waiting to ask.
+- The `chat-images` bucket is public (like the existing photo buckets) --
+  the URLs are unguessable UUIDs, not secrets, and Claude's vision API needs
+  a URL it can fetch directly.
+
+**Bug found and fixed during testing (not present in any previous release):**
+Sending an image with no caption crashed the request with a 500. Root cause:
+the knowledge-base search (RAG) step embeds the visitor's message text to
+find relevant documents, and Voyage's embedding API rejects an empty string
+-- an image-only message has no text to embed. Fixed by skipping the
+knowledge-base lookup entirely when there's no text (an image-only message
+has nothing for it to match against anyway); the image itself still reaches
+the AI normally.
+
+**Verified (real Claude vision call, real Supabase Storage, real embed.js
+mechanism -- not just the standalone `/widget/[id]` preview route, which has
+already been shown this project to hide real iframe-layout bugs):**
+`scripts/verify-image-understanding.mjs` creates a throwaway business, drives
+a real Chromium browser against a mock host page loading the actual
+`embed.js` snippet, attaches a generated test image (a red square with a
+distinct blue circle) with no caption, and sends it. **11/11 checks passed**:
+upload validation (rejects >8MB and non-image types); the image uploads and
+the message stores a real `chat-images` URL; the AI's reply actually
+described "a blue circle centered on a red background" -- a real vision
+read, not a generic non-answer; the image renders inline in the visitor's
+own chat log; a full page reload still shows the image in restored history;
+zero uncaught client-side JS errors; an arbitrary external image URL sent
+directly to the API is rejected/ignored, never reaching Claude. Test data
+(business, owner, sessions, messages, uploaded storage files) fully cleaned
+up afterward.
+
+**Still incomplete / next step:** none -- this feature is complete and
+verified end-to-end.
+
 ## 2026-08-25 — Removed drag, fixed a real double-widget bug, scroll-to-latest on reopen, much shorter AI replies
 
 Founder's screenshot from a real WordPress/Elementor site showed the

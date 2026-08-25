@@ -11,7 +11,7 @@ function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 }
 
-export type ChatTurn = { role: "user" | "assistant"; content: string };
+export type ChatTurn = { role: "user" | "assistant"; content: string; imageUrl?: string };
 
 /**
  * One RAG chat turn: system prompt (persona + retrieved knowledge) plus the
@@ -32,10 +32,21 @@ export async function generateReply(params: {
   executeTool?: (name: string, input: Record<string, unknown>) => Promise<string>;
 }): Promise<string> {
   const anthropic = client();
-  const messages: Anthropic.MessageParam[] = params.history.map((turn) => ({
-    role: turn.role,
-    content: turn.content,
-  }));
+  // A turn with an attached image needs real content blocks (image block(s)
+  // first, then the caption text, matching Claude's own vision examples) --
+  // everything else stays a plain string, which the API treats identically
+  // to a single text block.
+  const messages: Anthropic.MessageParam[] = params.history.map((turn) =>
+    turn.imageUrl
+      ? {
+          role: turn.role,
+          content: [
+            { type: "image", source: { type: "url", url: turn.imageUrl } },
+            { type: "text", text: turn.content || "What's in this image?" },
+          ],
+        }
+      : { role: turn.role, content: turn.content }
+  );
 
   for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
     const response = await anthropic.messages.create({

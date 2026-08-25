@@ -5,12 +5,24 @@ import { respondToVisitorMessage } from "@/lib/chat/respond";
 // Public endpoint -- website visitors chatting through the embed widget (or
 // the dashboard's test-chat page) are anonymous, not Supabase-authenticated
 // business users, so this can't be gated the way dashboard routes are.
+// Only ever accepts an image URL pointing at our own upload bucket -- not an
+// arbitrary URL an unauthenticated caller could point at any image on the
+// internet, which would turn this public endpoint into a free image-analysis
+// proxy billed to whichever business's plan the request names.
+const CHAT_IMAGE_URL_PREFIX = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/chat-images/`;
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body.businessId !== "string" || typeof body.message !== "string") {
     return NextResponse.json({ error: "businessId and message are required." }, { status: 400 });
   }
-  if (!body.message.trim()) {
+
+  const imageUrl = typeof body.imageUrl === "string" && body.imageUrl.startsWith(CHAT_IMAGE_URL_PREFIX) ? body.imageUrl : undefined;
+
+  // A message needs either real text or an attached image -- not neither,
+  // but an image with no caption (like sending a photo with nothing typed)
+  // is a normal thing to send.
+  if (!body.message.trim() && !imageUrl) {
     return NextResponse.json({ error: "message cannot be empty." }, { status: 400 });
   }
 
@@ -37,6 +49,7 @@ export async function POST(request: Request) {
       sessionId,
       visitorId,
       message: body.message,
+      imageUrl,
       lead,
     });
     return NextResponse.json({ ...result, visitorId });

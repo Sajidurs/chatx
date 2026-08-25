@@ -3,7 +3,10 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
-type Message = { id?: string; role: "visitor" | "assistant" | "business" | "system"; content: string };
+type Message = { id?: string; role: "visitor" | "assistant" | "business" | "system"; content: string; imageUrl?: string };
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,6 +81,11 @@ export function EmbedWidget({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null);
+  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [typing, setTyping] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   // sessionIdRef flips from undefined to a real ID asynchronously (either
@@ -147,7 +155,12 @@ export function EmbedWidget({
       .then((data) => {
         if (data.messages?.length) {
           setMessages(
-            data.messages.map((m: { id: string; role: string; content: string }) => ({ id: m.id, role: m.role, content: m.content }))
+            data.messages.map((m: { id: string; role: string; content: string; imageUrl?: string }) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              imageUrl: m.imageUrl,
+            }))
           );
           for (const m of data.messages) if (m.id) seenMessageIdsRef.current.add(m.id);
           lastMessageAtRef.current = data.messages[data.messages.length - 1].createdAt;
@@ -235,7 +248,12 @@ export function EmbedWidget({
           for (const m of newOnes) seenMessageIdsRef.current.add(m.id);
           setMessages((prev) => [
             ...prev,
-            ...newOnes.map((m: { id: string; role: string; content: string }) => ({ id: m.id, role: m.role, content: m.content })),
+            ...newOnes.map((m: { id: string; role: string; content: string; imageUrl?: string }) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              imageUrl: m.imageUrl,
+            })),
           ]);
           playNotificationSound();
         }
@@ -270,12 +288,12 @@ export function EmbedWidget({
   // a second /api/chat call firing while the first is still in flight would
   // race on that state. Queueing client-side gets the best of both: nothing
   // blocks typing or hitting send, requests still go out one at a time.
-  const pendingQueueRef = useRef<string[]>([]);
+  const pendingQueueRef = useRef<{ text: string; imageUrl?: string }[]>([]);
 
-  async function sendMessage(text: string, lead?: { name: string; email: string }) {
-    if (!text) return;
+  async function sendMessage(text: string, lead?: { name: string; email: string }, imageUrl?: string) {
+    if (!text && !imageUrl) return;
 
-    setMessages((prev) => [...prev, { role: "visitor", content: text }]);
+    setMessages((prev) => [...prev, { role: "visitor", content: text, imageUrl }]);
     setSending(true);
     // Shown immediately, not just during the post-response pacing delay
     // below -- the real wait (the actual API round trip, typically several
@@ -294,6 +312,7 @@ export function EmbedWidget({
           sessionId: sessionIdRef.current,
           visitorId: visitorIdRef.current,
           ...(lead ? { leadName: lead.name, leadEmail: lead.email } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
         }),
       });
       const data = await res.json();
@@ -338,19 +357,61 @@ export function EmbedWidget({
       setTyping(false);
       setSending(false);
       const next = pendingQueueRef.current.shift();
-      if (next) sendMessage(next);
+      if (next) sendMessage(next.text, undefined, next.imageUrl);
     }
   }
 
   async function send() {
     const text = input.trim();
-    if (!text) return;
+    const imageUrl = pendingImageUrl ?? undefined;
+    if (!text && !imageUrl) return;
     setInput("");
+    clearPendingImage();
     if (sending) {
-      pendingQueueRef.current.push(text);
+      pendingQueueRef.current.push({ text, imageUrl });
       return;
     }
-    await sendMessage(text);
+    await sendMessage(text, undefined, imageUrl);
+  }
+
+  function clearPendingImage() {
+    if (pendingImagePreview) URL.revokeObjectURL(pendingImagePreview);
+    setPendingImagePreview(null);
+    setPendingImageUrl(null);
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function handleImageSelected(file: File | undefined) {
+    if (!file) return;
+    setImageError(null);
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      setImageError("Please choose a PNG, JPEG, WebP, or GIF image.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB, max 8MB).`);
+      return;
+    }
+
+    setPendingImagePreview(URL.createObjectURL(file));
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append("businessId", businessId);
+      formData.append("image", file);
+      const res = await fetch("/api/chat/upload-image", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setImageError(data.error || "Upload failed. Please try again.");
+        return;
+      }
+      setPendingImageUrl(data.url);
+    } catch {
+      setImageError("Upload failed. Please try again.");
+    } finally {
+      setUploadingImage(false);
+    }
   }
 
   async function submitLead() {
@@ -560,6 +621,14 @@ export function EmbedWidget({
                         : "mr-auto max-w-[80%] rounded-2xl rounded-bl-md bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900"
                   }`}
                 >
+                  {m.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element -- a visitor-uploaded image, not a Next-optimizable static asset
+                    <img
+                      src={m.imageUrl}
+                      alt="Sent attachment"
+                      className={`max-h-48 w-full rounded-xl object-cover ${m.content ? "mb-2" : ""}`}
+                    />
+                  )}
                   {m.content}
                 </div>
               ))}
@@ -572,24 +641,73 @@ export function EmbedWidget({
                 e.preventDefault();
                 send();
               }}
-              className="flex items-center gap-2 border-t border-gray-100 p-3"
+              className="flex flex-col gap-2 border-t border-gray-100 p-3"
             >
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a message..."
-                className="flex-1 rounded-full border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                aria-label="Send message"
-                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-brand-500 text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px] translate-x-[1px]">
-                  <path d="M4 12l16-8-6 8 6 8-16-8z" fill="currentColor" />
-                </svg>
-              </button>
+              {imageError && <p className="px-1 text-xs text-red-600">{imageError}</p>}
+              {pendingImagePreview && (
+                <div className="relative w-fit">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local object-URL preview of a file the visitor just picked, not a static asset */}
+                  <img src={pendingImagePreview} alt="Selected attachment" className="h-16 w-16 rounded-xl object-cover" />
+                  {uploadingImage && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/30">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={clearPendingImage}
+                    aria-label="Remove image"
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-gray-900 text-white shadow-sm"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3">
+                      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(e) => handleImageSelected(e.target.files?.[0])}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach an image"
+                  className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                    <path
+                      d="M21 12.5V7a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v10a4 4 0 0 0 4 4h7.5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                    <circle cx="8.5" cy="9.5" r="1.5" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M4 17l4.5-4.5a2 2 0 0 1 2.8 0L15 16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M17 15v6M14 18h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Type a message..."
+                  className="flex-1 rounded-full border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() && !pendingImageUrl}
+                  aria-label="Send message"
+                  className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-brand-500 text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px] translate-x-[1px]">
+                    <path d="M4 12l16-8-6 8 6 8-16-8z" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
             </form>
           </>
         )}
