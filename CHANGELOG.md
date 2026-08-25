@@ -3,6 +3,80 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Subscription history on Account; found and fixed a real plan/billing drift bug; premium login/signup redesign
+
+**Explored, then declined, a third-party AI gateway.** Founder had $78 in
+credits on gorouter.app (a self-hosted "New API" proxy) and asked to test
+using it for this project's Claude calls. Ran an isolated connectivity
+test (no app code touched, no customer data) -- it technically worked and
+was genuinely backed by real Anthropic infrastructure, but a 10-word test
+message reported 6,858 prompt tokens (~500x expected), the configured
+`claude-opus-5-thinking` model wasn't accessible on the key, and the
+service's own landing page is essentially content-free. Recommended
+against it given the reliability, ToS, and privacy-policy implications of
+routing customer conversations through an undocumented proxy, on top of
+the inflated token cost. Founder agreed -- staying on the direct Anthropic
+API, which is what the app already uses in production.
+
+**Subscription history**, added to the Account page (a founder request:
+"see which plan the user started with, and the rest of history"). First
+attempt read this back from Stripe invoices at display time, matching the
+pattern already used on the checkout success page -- but real testing
+against Aim Haircut's actual account surfaced a genuine ambiguity: a
+single Stripe invoice can bundle proration line items from *several*
+plan changes together (a customer changing plans more than once before
+the next invoice is finalized), so "the resulting plan for this invoice"
+turned out not to be reliably inferrable after the fact from
+`lines.data[0]`. Rebuilt around a new `plan_history` table
+(`business_id`, `plan`, `changed_at`) instead, written by the Stripe
+webhook the instant each real `checkout.session.completed` or
+`customer.subscription.updated` event is processed -- no ambiguity,
+since it's recorded at the moment it happens rather than reconstructed
+afterward. Backfilled existing businesses' history from Stripe's raw
+event log (`events.list`, filtered client-side by customer since Events
+has no direct customer filter) rather than the ambiguous invoices.
+
+**A real bug the backfill surfaced:** "Man Feshiopn"'s database recorded
+`plan: starter`, but its actual live Stripe subscription -- confirmed
+directly against the subscription object -- was genuinely on **Pro**.
+Since 2026-08-17 this business had likely been billed for Pro while
+denied Pro's actual feature (Calendar booking) and capped at Starter's
+1,000-visitor quota instead of unlimited. Confirmed with the founder and
+synced the business record to match the real subscription.
+
+**Premium login/signup redesign**, matching a reference screenshot's
+pattern (dark visual panel + headline on the left, clean white form on
+the right) with Falah Chat's own content and brand green -- not the
+reference's actual copy or brand. New shared `AuthSplitLayout` component
+used by login, signup, and a new forgot-password flow. The visual panel's
+glow is plain CSS gradients, not an image asset. Google sign-in is
+explicitly deferred (founder's own call, "add it later") -- no button for
+it was added, rather than shipping one that doesn't do anything yet.
+
+**Decision made:** the reference screenshot also showed a "Forgot
+password?" link -- there was no password-reset flow in the app at all
+before this. Built one (`/forgot-password` + `/reset-password`, standard
+Supabase `resetPasswordForEmail`/`exchangeCodeForSession`/`updateUser`
+flow) rather than wiring the link to nothing, since a dead link on a real
+account-recovery affordance is worse than not showing the affordance at
+all. Left out "Remember me" -- it doesn't correspond to any real distinct
+behavior in this app's session handling, and a decorative checkbox that
+does nothing felt worse than one fewer element.
+
+**Verified:** the visitor-quota work from earlier today (11/11 checks,
+real end-to-end test, Test Chat fix) was already verified in its own
+right. For today's changes specifically: ran a real Stripe checkout
+end-to-end and confirmed the webhook's new `plan_history` insert actually
+fires (a first local-only attempt showed nothing logged -- turned out
+Stripe's registered webhook always calls production, never localhost,
+regardless of where the checkout itself runs, so this could only be
+confirmed after deploying). Screenshotted all three new/redesigned auth
+pages at desktop and mobile widths. Ran real logins (success and wrong-password
+error), a real signup, the forgot-password submission path, and confirmed
+`/reset-password` renders correctly with no code present. All throwaway
+test accounts and subscriptions cleaned up afterward. `npx tsc --noEmit`
+and `npm run build` both clean. Deploying now.
+
 ## 2026-08-25 — Plan quota is now distinct visitors per month, not total messages
 
 Founder wants Free/Starter/Pro's limits (20 / 1,000 / unlimited) to mean

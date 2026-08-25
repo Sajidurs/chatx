@@ -81,6 +81,7 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
           past_due_at: null,
         })
         .eq("id", businessId);
+      await admin.from("plan_history").insert({ business_id: businessId, plan });
       return;
     }
 
@@ -100,7 +101,7 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
 
       const { data: business } = await admin
         .from("businesses")
-        .select("stripe_subscription_id")
+        .select("plan, stripe_subscription_id")
         .eq("id", businessId)
         .single();
       if (!business) return;
@@ -113,6 +114,12 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
         .from("businesses")
         .update({ plan, stripe_subscription_id: subscription.id, stripe_customer_id: subscription.customer as string })
         .eq("id", businessId);
+      // Only log an actual change -- this event also fires for unrelated
+      // subscription edits (e.g. metadata-only updates) that don't change
+      // which plan the business is on.
+      if (plan !== business.plan) {
+        await admin.from("plan_history").insert({ business_id: businessId, plan });
+      }
       return;
     }
 

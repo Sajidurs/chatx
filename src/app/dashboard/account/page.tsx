@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUserProfile, initialsFor } from "@/lib/auth/current-user-profile";
+import { getCurrentBusinessContext } from "@/lib/auth/current-business";
+import { createClient } from "@/lib/supabase/server";
 import { updateProfile, uploadAvatarPhoto, changePassword } from "./actions";
 import { PageHeader, Card } from "../ui";
 import { SavedBanner, ErrorBanner } from "../confirm-banners";
@@ -7,9 +9,41 @@ import { SavedBanner, ErrorBanner } from "../confirm-banners";
 const inputClass =
   "rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100";
 
+const PLAN_LABELS: Record<string, string> = { free: "Free", starter: "Starter", pro: "Pro" };
+
+type HistoryEntry = { date: Date; label: string };
+
+// Reads from plan_history (recorded by the webhook the moment each real
+// plan change is processed) rather than reconstructing it from Stripe
+// invoices at display time -- confirmed directly that a single invoice can
+// bundle proration line items from more than one plan change together (a
+// customer changing plans more than once before the next invoice is
+// finalized), which makes "the resulting plan for this invoice" genuinely
+// ambiguous to infer after the fact. Recording it at the moment it happens
+// has no such ambiguity.
+async function getSubscriptionHistory(businessId: string, createdAt: string): Promise<HistoryEntry[]> {
+  const supabase = await createClient();
+  const { data: changes } = await supabase
+    .from("plan_history")
+    .select("plan, changed_at")
+    .eq("business_id", businessId)
+    .order("changed_at", { ascending: false });
+
+  const entries: HistoryEntry[] = (changes ?? []).map((c) => ({
+    date: new Date(c.changed_at),
+    label: `Changed to ${PLAN_LABELS[c.plan] ?? c.plan} plan`,
+  }));
+
+  entries.push({ date: new Date(createdAt), label: "Started on Free plan" });
+  return entries;
+}
+
 export default async function AccountPage() {
   const profile = await getCurrentUserProfile();
   if (!profile) redirect("/login");
+
+  const context = await getCurrentBusinessContext();
+  const history = context ? await getSubscriptionHistory(context.business.id, context.business.created_at) : [];
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -73,6 +107,21 @@ export default async function AccountPage() {
             Update password
           </button>
         </form>
+      </Card>
+
+      <Card className="flex flex-col gap-4">
+        <div>
+          <h2 className="font-semibold">Subscription history</h2>
+          <p className="text-sm text-gray-500">The plan you started on, and every plan change since.</p>
+        </div>
+        <div className="flex flex-col divide-y divide-gray-100">
+          {history.map((entry, i) => (
+            <div key={i} className="flex items-center justify-between gap-4 py-3">
+              <p className="text-sm font-medium text-gray-900">{entry.label}</p>
+              <p className="text-xs text-gray-500">{entry.date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</p>
+            </div>
+          ))}
+        </div>
       </Card>
     </div>
   );
