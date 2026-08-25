@@ -3,6 +3,41 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Addressed Google's OAuth verification feedback: Limited Use disclosure added
+
+Google's review came back requesting two fixes before verification can
+continue: (1) the app's homepage reads as "behind a login page," and (2)
+apps whose AI/ML models touch Workspace API data must publicly host a
+Limited Use compliance statement.
+
+**Fixed directly (code):** added a "Google API Limited Use disclosure"
+section to `src/app/privacy/page.tsx` -- the exact privacy policy URL
+already on file with Google for this verification. States plainly that
+Calendar data is used only to power the booking features described
+elsewhere on the page, is never used to train a general-purpose AI model,
+and links to Google's own API Services User Data Policy.
+
+**Needs a founder action, not code:** checked `app.falahchat.com/` directly
+as an anonymous visitor -- it does load without requiring login (confirmed
+via a raw unauthenticated fetch), so it isn't literally gated. The more
+likely read is that it's a bare placeholder (logo, one sentence, Sign
+up/Log in buttons) that a reviewer reasonably read as "just a login
+gateway" rather than a real homepage. Recommended fix: change the
+"Application home page" field in Google Cloud Console's Branding settings
+from `https://app.falahchat.com/` to the actual marketing site,
+`https://www.falahchat.com/` -- fully public, already covers Google's
+domain-verification requirement (same verified `falahchat.com` domain
+property from the earlier OAuth setup), and describes the product properly.
+This is a Console field edit, not something changeable via this codebase or
+its deploy pipeline.
+
+**Verified:** loaded `/privacy` with a fresh Playwright browser after the
+change -- the new section renders in the right place with the correct
+text. `npx tsc --noEmit` and `npm run build` both clean. Deploying now.
+Google's email requires a direct reply to their thread once both items are
+addressed -- founder still needs to make the Console homepage-URL change
+and then reply to confirm.
+
 ## 2026-08-24 — Upgrades bill immediately; downgrades never charge
 
 Founder asked for a specific billing rule after the previous fix: when an

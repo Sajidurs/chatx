@@ -5,7 +5,7 @@ export const metadata = {
   title: "Privacy Policy — Falah Chat",
 };
 
-const LAST_UPDATED = "August 20, 2026";
+const LAST_UPDATED = "August 25, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -96,6 +96,28 @@ export default function PrivacyPolicyPage() {
             dashboard keep working correctly. If a business customer closes their account, or a visitor wants their information
             removed, contact us (below) and we&apos;ll delete it -- this is currently handled as a manual request rather than a
             self-service option in the product.
+          </p>
+        </section>
+
+        <section>
+          <h2>Google API Limited Use disclosure</h2>
+          <p>
+            For businesses that connect Google Calendar, Falah Chat&apos;s AI assistant reads calendar availability and creates,
+            cancels, or reschedules events on that business&apos;s behalf in order to handle booking requests in conversation.
+          </p>
+          <p>
+            Falah Chat&apos;s use and transfer of information received from Google APIs to any other app will adhere to the{" "}
+            <a
+              href="https://developers.google.com/terms/api-services-user-data-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-brand-700 underline"
+            >
+              Google API Services User Data Policy
+            </a>
+            , including the Limited Use requirements. Calendar data is used only to provide the scheduling features described above
+            for the connected business, is not used to train any general-purpose AI model, and is never sold or shared for
+            advertising.
           </p>
         </section>
 
