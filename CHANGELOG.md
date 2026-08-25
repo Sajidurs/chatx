@@ -3,6 +3,68 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Plan quota is now distinct visitors per month, not total messages
+
+Founder wants Free/Starter/Pro's limits (20 / 1,000 / unlimited) to mean
+different *people* chatting with the assistant per month, not total AI
+messages -- one visitor sending 50 messages should never count against the
+cap the way 50 different visitors would.
+
+**Schema** (`supabase/migrations/20260825000000_visitor_based_quota.sql`,
+pushed live via `supabase db push --db-url`):
+- `plan_limits.monthly_messages` renamed to `monthly_visitors` (same values:
+  20 / 1,000 / null).
+- New `monthly_active_visitors (business_id, month, visitor_id)` -- the set
+  of visitors already "seen" (and therefore already counted) this month.
+- `usage_logs` gained a `visitor_count` column; `message_count` is kept as
+  an informational total, no longer gates anything.
+- **Backfilled from real historical chat data** (`chat_messages` joined
+  through `chat_sessions.visitor_id`) rather than resetting every business's
+  usage to zero on deploy -- a business already active partway through this
+  month keeps an accurate visitor count instead of an unearned reset.
+
+**Quota function** (`try_consume_message_quota`, same migration): now takes
+`p_visitor_id` alongside `p_business_id`. A visitor already seen this month
+is always allowed (never re-counted); a new visitor only claims a slot if
+the plan's visitor cap isn't already reached, using the same atomic
+row-locked `UPDATE ... WHERE ... RETURNING` technique the old
+message-counting version used, so concurrent requests still can't race
+past the cap.
+
+**A real gap this surfaced and fixed:** the dashboard's own "Test your
+assistant" page generated a fresh random visitor ID on every page load,
+with no persistence. Under the old message-based quota that was mildly
+wasteful; under the new visitor-based quota it would have silently burned
+through a Free plan's entire 20-visitor monthly cap just from the owner
+reloading that page to test their own bot a few times, before a single real
+customer ever showed up. Fixed by giving Test Chat a fixed visitor ID
+derived from the business ID, so it only ever consumes one slot total per
+month, however many times the owner tests. (The real embeddable widget was
+already fine -- confirmed it persists its visitor ID in `localStorage`.)
+
+**Application code updated to match:** `respond.ts` passes the real
+visitor ID into the quota check; the `invoice.paid` webhook handler now
+resets both `visitor_count` and the `monthly_active_visitors` "seen" set
+together (resetting one without the other would let a visitor who already
+chatted earlier this month keep bypassing the check as "already seen"
+against a counter that just went back to zero); the dashboard's usage card
+and 12-month chart now show/plot visitors instead of messages; Plans and
+Terms copy updated to describe visitor limits instead of message limits.
+
+**Verified:** wrote `scripts/verify-visitor-quota.mjs` and ran it against
+the live database -- 11/11 checks pass, including: one visitor sending 25
+messages is never blocked and counts as exactly 1 visitor; 20 different
+visitors are all allowed and a 21st is blocked; an already-counted visitor
+still gets through even after the cap is hit; Pro (unlimited) never blocks;
+and the invoice.paid reset correctly clears both the counter and the seen
+set (a previously-seen visitor counts as new again post-reset). Separately
+ran a real end-to-end test through the actual `/api/chat` route (not just
+the raw SQL function) -- 3 messages from 1 real visitor correctly logged
+as `message_count: 3, visitor_count: 1`. Also verified the Test Chat fix
+directly with Playwright: reloading that page and testing twice produced
+exactly one row in `monthly_active_visitors`, not two. `npx tsc --noEmit`
+and `npm run build` both clean. Deploying now.
+
 ## 2026-08-25 — Addressed Google's OAuth verification feedback: Limited Use disclosure added
 
 Google's review came back requesting two fixes before verification can

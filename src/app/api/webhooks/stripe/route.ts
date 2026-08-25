@@ -166,7 +166,12 @@ async function handleEvent(event: Stripe.Event, admin: ReturnType<typeof createA
       const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
       await admin
         .from("usage_logs")
-        .upsert({ business_id: business.id, month, message_count: 0 }, { onConflict: "business_id,month" });
+        .upsert({ business_id: business.id, month, message_count: 0, visitor_count: 0 }, { onConflict: "business_id,month" });
+      // The "seen this month" set has to reset alongside the counter --
+      // otherwise a visitor who already chatted earlier this same month
+      // would keep bypassing the quota check as "already seen" even though
+      // the count they'd bypass against just went back to 0.
+      await admin.from("monthly_active_visitors").delete().eq("business_id", business.id).eq("month", month);
       return;
     }
 

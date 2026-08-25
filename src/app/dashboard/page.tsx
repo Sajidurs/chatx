@@ -47,8 +47,8 @@ export default async function DashboardPage({
     { data: nextBooking },
     { data: recentBookings },
   ] = await Promise.all([
-    supabase.from("usage_logs").select("month, message_count").eq("business_id", business.id).in("month", last12Months),
-    supabase.from("plan_limits").select("monthly_messages").eq("plan", business.plan).single(),
+    supabase.from("usage_logs").select("month, visitor_count").eq("business_id", business.id).in("month", last12Months),
+    supabase.from("plan_limits").select("monthly_visitors").eq("plan", business.plan).single(),
     supabase.from("chat_sessions").select("id", { count: "exact", head: true }).eq("business_id", business.id),
     supabase.from("bookings").select("id", { count: "exact", head: true }).eq("business_id", business.id),
     supabase.from("leads").select("id", { count: "exact", head: true }).eq("business_id", business.id),
@@ -69,17 +69,17 @@ export default async function DashboardPage({
       .limit(5),
   ]);
 
-  const usageByMonth = new Map((usageRows ?? []).map((r) => [r.month, r.message_count]));
+  const usageByMonth = new Map((usageRows ?? []).map((r) => [r.month, r.visitor_count]));
   const chartMonths = last12Months.map((m) => ({
     label: new Date(`${m}-01T00:00:00Z`).toLocaleDateString(undefined, { month: "short" }),
     count: usageByMonth.get(m) ?? 0,
   }));
 
-  const messagesThisMonth = usageByMonth.get(currentMonth) ?? 0;
-  const messagesLastMonth = usageByMonth.get(previousMonth) ?? 0;
-  const monthlyLimit = planLimit?.monthly_messages ?? null;
-  const usagePercent = monthlyLimit ? Math.min(100, (messagesThisMonth / monthlyLimit) * 100) : 0;
-  const momChange = messagesLastMonth > 0 ? Math.round(((messagesThisMonth - messagesLastMonth) / messagesLastMonth) * 100) : null;
+  const visitorsThisMonth = usageByMonth.get(currentMonth) ?? 0;
+  const visitorsLastMonth = usageByMonth.get(previousMonth) ?? 0;
+  const monthlyLimit = planLimit?.monthly_visitors ?? null;
+  const usagePercent = monthlyLimit ? Math.min(100, (visitorsThisMonth / monthlyLimit) * 100) : 0;
+  const momChange = visitorsLastMonth > 0 ? Math.round(((visitorsThisMonth - visitorsLastMonth) / visitorsLastMonth) * 100) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -136,10 +136,10 @@ export default async function DashboardPage({
         <div className="flex flex-col justify-between rounded-2xl bg-gray-900 p-6 text-white shadow-sm">
           <div>
             <p className="text-3xl font-semibold">
-              {messagesThisMonth}
+              {visitorsThisMonth}
               {monthlyLimit && <span className="text-base font-normal text-gray-400"> / {monthlyLimit}</span>}
             </p>
-            <p className="text-sm text-gray-300">Messages this month</p>
+            <p className="text-sm text-gray-300">Visitors this month</p>
           </div>
           <span
             className={`mt-4 w-fit rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -161,7 +161,7 @@ export default async function DashboardPage({
           >
             <div>
               <span className="w-fit rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-medium">Upgrade</span>
-              <p className="mt-2 text-lg font-semibold leading-snug">Switch to Pro for unlimited messages and booking</p>
+              <p className="mt-2 text-lg font-semibold leading-snug">Switch to Pro for unlimited visitors and booking</p>
             </div>
             <ArrowUpRight className="mt-4 h-5 w-5" />
           </Link>
@@ -203,7 +203,7 @@ export default async function DashboardPage({
               <HighlightCard
                 tone={usagePercent >= 80 ? "warning" : "info"}
                 title={usagePercent >= 80 ? "Approaching your limit" : "Usage is healthy"}
-                description={`You've used ${Math.round(usagePercent)}% of this month's ${monthlyLimit} messages.`}
+                description={`You've used ${Math.round(usagePercent)}% of this month's ${monthlyLimit} visitors.`}
                 href="/plans"
               />
             )}

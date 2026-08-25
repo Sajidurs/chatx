@@ -33,7 +33,11 @@ export function ChatWidget({
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
-  const visitorIdRef = useRef<string | undefined>(undefined);
+  // Fixed per business rather than a fresh random ID per page load -- the
+  // visitor quota now counts distinct people, not messages, so a random ID
+  // here would silently burn through a business's monthly visitor cap every
+  // time the owner reopens this page to test their own assistant.
+  const visitorIdRef = useRef<string | undefined>(`owner-test-${businessId}`);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

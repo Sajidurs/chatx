@@ -31,7 +31,7 @@ export default function TermsPage() {
           <p>
             Falah Chat lets a business train an AI assistant on its own documents, embed it as a chat widget on its website, and
             optionally connect a Google Calendar so the assistant can check availability and book, cancel, or reschedule meetings.
-            Plans, features, and message limits vary by the subscription tier chosen at sign-up.
+            Plans, features, and monthly visitor limits vary by the subscription tier chosen at sign-up.
           </p>
         </section>
 

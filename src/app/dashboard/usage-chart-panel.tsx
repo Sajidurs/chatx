@@ -13,7 +13,7 @@ export function UsageChartPanel({ months }: { months: { label: string; count: nu
     <div>
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-sm font-semibold">Message volume</p>
+          <p className="text-sm font-semibold">Unique visitors</p>
           <p className="text-xs text-gray-500">Last {range} months</p>
         </div>
         <div className="flex items-center gap-1 rounded-full bg-gray-100 p-1">

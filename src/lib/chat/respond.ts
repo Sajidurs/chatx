@@ -117,8 +117,13 @@ export async function respondToVisitorMessage(params: {
 
   // Quota is checked (and, if allowed, consumed) before calling Claude at all
   // -- never generate a reply first and decide whether to count it after.
+  // The cap is on distinct visitors per month, not total messages -- a
+  // visitor already counted this month is always allowed through
+  // regardless of how many messages they send; only a new 21st (etc.)
+  // different person in the same month gets blocked.
   const { data: allowed, error: quotaError } = await admin.rpc("try_consume_message_quota", {
     p_business_id: params.businessId,
+    p_visitor_id: params.visitorId,
   });
   if (quotaError) throw quotaError;
 
@@ -127,7 +132,7 @@ export async function respondToVisitorMessage(params: {
       sessionId: resolvedSessionId,
       blocked: true,
       blockedReason:
-        "This business has reached its message limit for the month. Please contact them directly for further help.",
+        "This business has reached its plan limit for the month. Please contact them directly for further help.",
       replies: [],
       controlledBy,
     };

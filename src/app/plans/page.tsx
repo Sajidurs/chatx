@@ -10,13 +10,14 @@ import { ErrorBanner } from "../dashboard/confirm-banners";
 
 const PLAN_ORDER: Plan[] = ["free", "starter", "pro"];
 
-// Mirrors plan_limits + what's actually plan-gated in the code (only
-// message quota and booking are) -- not marketing copy invented for this
-// page.
+// Mirrors plan_limits + what's actually plan-gated in the code (only the
+// visitor quota and booking are) -- not marketing copy invented for this
+// page. The cap is on distinct visitors per month, not total messages -- one
+// visitor can send any number of messages without using up the plan's quota.
 const PLAN_FEATURES: Record<Plan, string[]> = {
-  free: ["Custom-trained AI assistant", "Embeddable website widget", "20 messages/month", "No Google Calendar booking"],
-  starter: ["Custom-trained AI assistant", "Embeddable website widget", "1,000 messages/month", "No Google Calendar booking"],
-  pro: ["Custom-trained AI assistant", "Embeddable website widget", "Unlimited messages", "Google Calendar booking with Google Meet links"],
+  free: ["Custom-trained AI assistant", "Embeddable website widget", "Up to 20 unique visitors/month", "No Google Calendar booking"],
+  starter: ["Custom-trained AI assistant", "Embeddable website widget", "Up to 1,000 unique visitors/month", "No Google Calendar booking"],
+  pro: ["Custom-trained AI assistant", "Embeddable website widget", "Unlimited visitors", "Google Calendar booking with Google Meet links"],
 };
 
 export default async function PlansPage() {
