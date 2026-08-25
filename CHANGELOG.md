@@ -3,6 +3,82 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Five real bugs found testing the widget live: drag jump, lost lead info, wrong booking time, oversized bubbles, late typing indicator
+
+Founder tested everything from earlier today live and reported five
+issues. All five turned out to be real, reproducible bugs (or a real
+misconfiguration), not perception -- each verified by reproducing it
+first, then confirming the fix.
+
+**1. "Problem with the moving widget."** Reproduced: a plain click on the
+header (zero mouse movement, no drag intended at all) still switched the
+iframe from its normal bottom/right corner anchor to an absolute pixel
+position -- `onMouseDown` fired regardless of whether any actual dragging
+followed. Minimizing afterward left the bubble stranded wherever the
+panel happened to be instead of the correct corner, which is exactly what
+"moving on its own" would look like from just glancing at or clicking near
+the assistant's name. Fixed with a small movement threshold (4px) before
+committing to drag mode -- confirmed a plain click now leaves the
+bottom/right anchor untouched, and a real drag still works correctly.
+
+**2. Intake form re-asking for name/email/message on the same session.**
+Reproduced on a full page reload specifically (not simply minimizing and
+reopening within the same page load, which already worked correctly).
+Root cause ties directly into issue #5 below: the "lead captured" flag
+was only persisted to localStorage *after* the server's response to the
+first message arrived -- and that response, per the ongoing latency work,
+can take several real seconds. A visitor who reloads or navigates away in
+that window, before the response (and the session id riding along with
+it) ever comes back, had this whole widget forget they'd already given
+their info. Fixed by writing a `chatx_lead_captured_{businessId}` flag to
+localStorage immediately on submit, before the network call, independent
+of whether a real session id has been learned back yet.
+
+**3. Booking landed 6 hours off (1PM booked, showed as 7PM).** Not a
+timezone *conversion* bug -- confirmed the actual code path (bare
+wall-clock time + explicit IANA `timeZone` field handed to Google) is
+correct. The real cause: Aim Haircut's business timezone was still on the
+schema default, `UTC`, never set to the business's real timezone
+(confirmed with the founder: `Asia/Dhaka`). "1PM" got correctly saved as
+1PM *UTC*, which displays as 7PM to a calendar viewing from a UTC+6
+device -- exactly the reported gap. Fixed the business's setting, and
+directly rescheduled the one real Google Calendar event this had already
+affected (Aug 30, now correctly 1PM Dhaka both in Google Calendar and in
+our own `bookings` row) rather than leaving a wrong meeting on the
+calendar. Added a warning banner on the Calendar page for any business
+still sitting on the UTC default, so this doesn't silently happen again.
+
+**4. Message bubbles stretching wider than their text.** Reproduced from
+the founder's screenshot. Root cause: the bubble `<div>` had `max-w-[80%]`
+but nothing telling it to actually shrink to its content below that --
+block-level elements fill their available width by default, they don't
+size to content on their own. Added `w-fit` (the `TypingDots` bubble
+already had this, which is why it never showed the bug). Short replies
+now hug their own text; long ones still wrap within the same 80% cap.
+
+**5. Typing indicator appearing late.** Root cause: `setTyping(true)` only
+ran *inside* the reply-reveal loop, which only starts after the
+`/api/chat` fetch has already fully completed -- so during the actual
+wait (the real several-second round trip this session has been working
+to shorten) nothing was shown at all; the dots only appeared briefly
+*after* the reply had already arrived, covering the artificial pacing
+delay instead of the real one. Moved it to fire the instant the visitor's
+message is sent, kept on continuously through a multi-bubble reply
+(back on between bubbles, not just before the first one), off in every
+exit path via the existing `finally` block.
+
+**Verified:** every fix reproduced first (the drag jump, the lead-form
+reset specifically on reload-before-response, the exact 6-hour booking
+offset, the oversized bubble from a real screenshot, the late indicator)
+before being called a bug, then re-tested after the fix with real
+Playwright interaction against the actual `embed.js` mechanism --
+including deliberately reloading mid-request to hit the interrupted-lead
+scenario, and confirming a completed conversation still fully restores on
+reload (no regression from the lead-flag change). The one real Google
+Calendar event affected by the timezone bug was located and corrected
+directly via the Calendar API, not just described as fixed. `npx tsc
+--noEmit` and `npm run build` both clean. Deploying now.
+
 ## 2026-08-25 — Draggable chat window; found the real production latency bottleneck
 
 Two follow-ups to the widget/speed work from earlier today.

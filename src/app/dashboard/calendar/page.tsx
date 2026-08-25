@@ -31,6 +31,16 @@ export default async function CalendarPage({
       <PageHeader title="Calendar" description={description} />
 
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      {context.business.timezone === "UTC" && (
+        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+          Your timezone is still set to the default, UTC -- almost certainly not your business&apos;s real timezone. Bookings made through chat
+          will land on the wrong hour until this is set correctly. Fix it on the{" "}
+          <a href="/dashboard/onboarding" className="font-medium underline">
+            Assistant setup
+          </a>{" "}
+          page before connecting or using Calendar booking.
+        </div>
+      )}
       {connected && (
         <div className="rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">Google Calendar connected.</div>
       )}

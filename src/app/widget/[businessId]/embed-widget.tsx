@@ -125,7 +125,17 @@ export function EmbedWidget({
   useEffect(() => {
     visitorIdRef.current = localStorage.getItem(`chatx_visitor_${businessId}`) || undefined;
     sessionIdRef.current = localStorage.getItem(`chatx_session_${businessId}`) || undefined;
-    setLeadCaptured(!!sessionIdRef.current);
+    // Also checks the lead-captured flag on its own, not just whether a real
+    // session id exists yet -- that id is only learned from the server's
+    // response to the visitor's first message, which (confirmed directly,
+    // this is the exact cause of a real report) can take several real
+    // seconds. A visitor who reloads or navigates away during that window,
+    // before the response (and the session id it carries) ever arrives,
+    // would otherwise have this whole widget forget they already gave their
+    // name and email and ask again -- see submitLead below for where this
+    // flag gets set immediately, before the network call.
+    const leadAlreadyCaptured = !!sessionIdRef.current || localStorage.getItem(`chatx_lead_captured_${businessId}`) === "1";
+    setLeadCaptured(leadAlreadyCaptured);
     setSessionKnown(!!sessionIdRef.current);
 
     if (!sessionIdRef.current) {
@@ -260,6 +270,12 @@ export function EmbedWidget({
 
     setMessages((prev) => [...prev, { role: "visitor", content: text }]);
     setSending(true);
+    // Shown immediately, not just during the post-response pacing delay
+    // below -- the real wait (the actual API round trip, typically several
+    // seconds) was previously invisible, with typing dots only appearing
+    // briefly after the reply had already fully arrived. This is what
+    // covers the wait itself, not just the tail end of it.
+    setTyping(true);
 
     try {
       const res = await fetch("/api/chat", {
@@ -300,11 +316,16 @@ export function EmbedWidget({
         if (reply.id) seenMessageIdsRef.current.add(reply.id);
       }
 
-      for (const reply of data.replies as { id: string; content: string; delayMs: number }[]) {
-        setTyping(true);
+      const replies = data.replies as { id: string; content: string; delayMs: number }[];
+      for (let i = 0; i < replies.length; i++) {
+        const reply = replies[i];
         await sleep(reply.delayMs);
         setTyping(false);
         setMessages((prev) => [...prev, { id: reply.id, role: "assistant", content: reply.content }]);
+        // Back on before the next chunk, if there is one -- a multi-bubble
+        // reply should still show typing between bubbles, not just before
+        // the first one.
+        if (i < replies.length - 1) setTyping(true);
       }
     } finally {
       setTyping(false);
@@ -331,6 +352,11 @@ export function EmbedWidget({
     const message = leadMessage.trim();
     if (!name || !email || !message || sending) return;
     setLeadCaptured(true);
+    // Written immediately, before the network call -- see the matching note
+    // on the mount effect above for why waiting for the server's response
+    // (which carries the real session id) to persist anything is what let
+    // this reset on a reload/reopen during a slow reply.
+    localStorage.setItem(`chatx_lead_captured_${businessId}`, "1");
     setLeadMessage("");
     await sendMessage(message, { name, email });
   }
@@ -342,16 +368,37 @@ export function EmbedWidget({
   // (no touch handlers); the drag handle is the header's name/photo area
   // specifically, not the whole header bar, so it never intercepts a click
   // on the minimize/close buttons next to it.
+  const DRAG_THRESHOLD_PX = 4;
+
   function startDrag(e: React.MouseEvent) {
     e.preventDefault();
-    window.parent.postMessage({ source: "chatx-widget", type: "dragStart" }, "*");
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragStarted = false;
 
-    // Per-tick movement (movementX/Y), not a running delta from where the
-    // drag started -- the iframe itself moves as a result of this drag, so
-    // a start-relative delta would be measured against a coordinate frame
-    // that's shifting underneath it. See the matching note in embed.js for
-    // the exact lag this caused when it was start-relative.
+    // Only actually starts dragging (and tells the parent to switch the
+    // iframe's anchoring away from its normal bottom/right corner) once the
+    // mouse has moved past a small threshold -- a plain click must never
+    // touch the iframe's positioning at all. Confirmed directly: without
+    // this, simply clicking the header (zero real movement, e.g. just to
+    // glance at it) still fired a mousedown-to-mouseup with no movement in
+    // between, which switched the iframe from its bottom/right anchor to
+    // an absolute pixel position anyway -- so minimizing right after a
+    // plain click (never intending to drag at all) left the bubble
+    // stranded wherever the panel happened to be instead of the correct
+    // corner. That's what looked like the widget "moving on its own."
     function handleMove(ev: MouseEvent) {
+      if (!dragStarted) {
+        const distance = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+        if (distance < DRAG_THRESHOLD_PX) return;
+        dragStarted = true;
+        window.parent.postMessage({ source: "chatx-widget", type: "dragStart" }, "*");
+      }
+      // Per-tick movement (movementX/Y), not a running delta from where the
+      // drag started -- the iframe itself moves as a result of this drag,
+      // so a start-relative delta would be measured against a coordinate
+      // frame that's shifting underneath it. See the matching note in
+      // embed.js for the exact lag this caused when it was start-relative.
       window.parent.postMessage({ source: "chatx-widget", type: "drag", dx: ev.movementX, dy: ev.movementY }, "*");
     }
     function handleUp() {
@@ -549,7 +596,7 @@ export function EmbedWidget({
               {messages.map((m, i) => (
                 <div
                   key={i}
-                  className={`animate-message-in ${
+                  className={`animate-message-in w-fit ${
                     m.role === "visitor"
                       ? "ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-brand-500 px-3.5 py-2.5 text-sm text-white"
                       : m.role === "system"
