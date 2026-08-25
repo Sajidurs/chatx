@@ -24,7 +24,7 @@ export default async function BookingsPage() {
   const supabase = await createClient();
   const { data: bookings } = await supabase
     .from("bookings")
-    .select("id, customer_name, customer_contact, start_time, end_time, status")
+    .select("id, customer_name, customer_contact, start_time, end_time, status, service, customer_notes")
     .eq("business_id", context.business.id)
     .order("start_time", { ascending: false })
     .limit(200);
@@ -46,6 +46,7 @@ export default async function BookingsPage() {
               <tr>
                 <th className="pb-3 font-medium">Customer</th>
                 <th className="pb-3 font-medium">Contact</th>
+                <th className="pb-3 font-medium">Service</th>
                 <th className="pb-3 font-medium">When</th>
                 <th className="pb-3 font-medium">Status</th>
               </tr>
@@ -53,12 +54,16 @@ export default async function BookingsPage() {
             <tbody className="divide-y divide-gray-50">
               {bookings.map((b) => (
                 <tr key={b.id}>
-                  <td className="py-3 pr-4 font-medium">{b.customer_name}</td>
-                  <td className="py-3 pr-4 text-gray-500">{b.customer_contact}</td>
-                  <td className="py-3 pr-4 text-gray-500">
+                  <td className="max-w-[220px] py-3 pr-4 align-top">
+                    <p className="font-medium">{b.customer_name}</p>
+                    {b.customer_notes && <p className="mt-0.5 text-xs text-gray-500">{b.customer_notes}</p>}
+                  </td>
+                  <td className="py-3 pr-4 align-top text-gray-500">{b.customer_contact}</td>
+                  <td className="py-3 pr-4 align-top text-gray-500">{b.service || "—"}</td>
+                  <td className="py-3 pr-4 align-top text-gray-500">
                     {new Date(b.start_time).toLocaleString()} &ndash; {new Date(b.end_time).toLocaleTimeString()}
                   </td>
-                  <td className="py-3">
+                  <td className="py-3 align-top">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ${STATUS_STYLES[b.status] || "bg-gray-100 text-gray-600"}`}>
                       {b.status}
                     </span>

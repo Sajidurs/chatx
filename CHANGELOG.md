@@ -3,6 +3,65 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Bookings now show which service was booked and context about the customer
+
+Founder's screenshots showed a confirmed booking in chat that clearly named
+a service ("Classic Haircut") and a customer detail worth knowing, but
+neither showed up on the Bookings dashboard tab -- just name, contact,
+time, and status. Requested: show which service each booking was for, plus
+an overall understanding of the customer, per row.
+
+**What was built:**
+
+- `bookings` gained two columns: `service` and `customer_notes`.
+- The `create_booking` tool Claude calls now takes two new arguments:
+  `service` (required -- "whatever the customer actually booked for, in a
+  few words") and `customer_notes` (optional -- a 1-2 sentence internal
+  note for the business owner: a preference mentioned, a question asked,
+  a returning customer, a special request). Both are captured directly at
+  booking time, since that's the one moment the AI already has the full
+  conversation in view -- there's no separate summarization step to keep in
+  sync or get wrong later.
+- The real Google Calendar event's title and description now include the
+  service too (e.g. "SEO Consultation -- Jamie Rivera" instead of the old
+  generic "Meeting with Jamie Rivera"), so it's useful outside the
+  dashboard as well.
+- The Bookings page shows a new "Service" column, and the customer note
+  (when present) as a small line under the customer's name.
+
+**Decision made:** Bookings made before this shipped have `service` and
+`customer_notes` as `null` -- there's no reliable way to reconstruct
+"which service" after the fact from just a generic old calendar event
+description, so this only applies going forward. The page shows "--" for
+the service on old rows rather than guessing.
+
+**Verified, with one real gap flagged rather than papered over:**
+
+- `scripts/verify-booking-service-display.mjs` -- **5/5 checks passed**
+  against a real throwaway business and a real logged-in dashboard session:
+  the Service column renders, a booking with `service`/`customer_notes` set
+  shows both correctly, and a booking with neither (simulating an old,
+  pre-feature row) still renders cleanly without breaking the page.
+- **Not fully verified end-to-end:** I also wrote
+  `scripts/verify-booking-service-context.mjs` to drive a real chat
+  conversation through `/api/chat` and confirm Claude actually supplies a
+  sensible `service`/`customer_notes` when booking for real, against
+  Wallxer -- the test business with a real, already-connected Google
+  Calendar used for this project's booking tests. That run failed with
+  `invalid_grant` from Google -- **Wallxer's stored Google Calendar
+  refresh token has expired/been revoked**, unrelated to anything changed
+  today (the same failure would happen on `main` before this change,
+  since `check_availability` failed the exact same way first). I can't
+  complete a Google OAuth consent screen myself to reconnect it.
+  **Manual test needed:** either reconnect Wallxer's calendar (Assistant
+  setup page's Calendar section) and I'll rerun that script, or test
+  directly on a real connected business by asking your assistant to book
+  a specific service and checking the Bookings tab afterward. The
+  `service` argument is marked `required` in the tool schema, which
+  Claude's tool-calling enforces at the API level (a required parameter
+  can't be silently omitted), so this is expected to work, but I want to
+  say plainly that I haven't watched it happen against a live calendar.
+
 ## 2026-08-25 — Redesigned the training document and assistant photo upload UI
 
 Founder reported real confusion on the "Training documents" and "Assistant

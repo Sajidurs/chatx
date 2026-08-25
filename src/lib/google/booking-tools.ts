@@ -49,8 +49,18 @@ export const BOOKING_TOOLS: Anthropic.Tool[] = [
         },
         customer_name: { type: "string", description: "The customer's name" },
         customer_contact: { type: "string", description: "The customer's email or phone number" },
+        service: {
+          type: "string",
+          description:
+            "The specific service, appointment type, or reason for this meeting, in the business owner's own terms (e.g. \"Classic Haircut\", \"Initial consultation\", \"Follow-up checkup\") -- whatever the customer actually booked for. Keep it short, a few words.",
+        },
+        customer_notes: {
+          type: "string",
+          description:
+            "A short internal note (1-2 sentences) for the business owner summarizing anything useful about this customer or conversation -- e.g. a preference they mentioned, a question they asked, whether they're a returning customer, a special request. Leave it empty only if nothing in the conversation is worth noting.",
+        },
       },
-      required: ["start_time", "end_time", "customer_name", "customer_contact"],
+      required: ["start_time", "end_time", "customer_name", "customer_contact", "service"],
     },
   },
   {
@@ -162,12 +172,21 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
           const endIso = String(input.end_time);
           const customerName = String(input.customer_name);
           const customerContact = String(input.customer_contact);
+          const service = String(input.service || "").trim();
+          const customerNotes = typeof input.customer_notes === "string" ? input.customer_notes.trim() : "";
 
           const { eventId, meetLink } = await createCalendarEvent({
             refreshTokenEncrypted: business.google_refresh_token,
             calendarId: business.google_calendar_id,
-            summary: `Meeting with ${customerName}`,
-            description: `Booked via ${business.name}'s chat assistant. Contact: ${customerContact}`,
+            summary: service ? `${service} -- ${customerName}` : `Meeting with ${customerName}`,
+            description: [
+              `Booked via ${business.name}'s chat assistant.`,
+              `Contact: ${customerContact}`,
+              service ? `Service: ${service}` : null,
+              customerNotes ? `Notes: ${customerNotes}` : null,
+            ]
+              .filter(Boolean)
+              .join("\n"),
             startIso,
             endIso,
             timeZone: business.timezone,
@@ -182,6 +201,8 @@ export function createBookingToolExecutor(business: BookingBusiness, sessionId: 
               google_event_id: eventId,
               customer_name: customerName,
               customer_contact: customerContact,
+              service: service || null,
+              customer_notes: customerNotes || null,
               // Stored as a real UTC instant, not the bare local string --
               // see resolveToUtcIso's doc comment for why a bare string can't
               // go straight into a timestamptz column.
