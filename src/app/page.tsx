@@ -1,38 +1,12 @@
-import Link from "next/link";
-import { LogoMark } from "./dashboard/logo-mark";
+import { redirect } from "next/navigation";
+import { getCurrentBusinessContext } from "@/lib/auth/current-business";
 
-// Still a lightweight placeholder -- the real sales/pricing page is Phase 7
-// scope (system_design.md). Real branding + privacy/terms links added now
-// specifically because Google's OAuth verification process checks that the
-// app's public homepage identifies the app and links to its privacy policy.
-export default function Home() {
-  return (
-    <div className="flex min-h-screen flex-col">
-      <main className="mx-auto flex flex-1 max-w-2xl flex-col items-center justify-center gap-6 px-4 text-center">
-        <div className="flex items-center gap-2">
-          <LogoMark />
-          <span className="text-xl font-semibold tracking-tight">Falah Chat</span>
-        </div>
-        <p className="text-gray-600">
-          Train an AI assistant on your business, connect your calendar, and embed it on your site.
-        </p>
-        <div className="flex gap-4">
-          <Link href="/signup" className="rounded-md bg-brand-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-600">
-            Sign up
-          </Link>
-          <Link href="/login" className="rounded-md border px-5 py-2.5 text-sm font-medium hover:bg-gray-50">
-            Log in
-          </Link>
-        </div>
-      </main>
-      <footer className="flex justify-center gap-6 py-6 text-xs text-gray-500">
-        <Link href="/privacy" className="hover:text-gray-700 hover:underline">
-          Privacy Policy
-        </Link>
-        <Link href="/terms" className="hover:text-gray-700 hover:underline">
-          Terms of Service
-        </Link>
-      </footer>
-    </div>
-  );
+// The public-facing marketing site is www.falahchat.com (a separate
+// project) -- this app's own root is only ever reached by someone already
+// signed in or mid-login, so it just routes to the right place rather than
+// showing a static placeholder. Google's OAuth "Application home page" was
+// switched to www.falahchat.com for this exact reason -- see CHANGELOG.
+export default async function Home() {
+  const context = await getCurrentBusinessContext();
+  redirect(context ? "/dashboard" : "/login");
 }

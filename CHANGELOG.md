@@ -3,6 +3,27 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — App root now redirects instead of showing a static placeholder
+
+Founder noticed `app.falahchat.com/` showed a bare "Sign up / Log in"
+placeholder page rather than routing straight to where a visitor actually
+belongs. `src/app/page.tsx` now checks auth state server-side and
+redirects: signed in with a business context -> `/dashboard`, otherwise
+-> `/login`. No static content is ever shown at this URL now.
+
+**Decision made:** this is safe now specifically because Google's OAuth
+"Application home page" was switched to `www.falahchat.com` earlier today
+-- that page (the actual marketing site, fully public) is what Google
+evaluates, not this one. Before that switch, this root page was
+deliberately built as a public, no-login-required landing page for
+exactly that requirement; redirecting it away entirely would have
+reintroduced the "homepage behind a login page" problem Google flagged.
+
+**Verified:** ran a real Playwright check both ways -- an anonymous
+visitor to `/` lands on `/login`; a real logged-in session visiting `/`
+lands on `/dashboard`. `npx tsc --noEmit` and `npm run build` both clean.
+Deploying now.
+
 ## 2026-08-25 — Subscription history on Account; found and fixed a real plan/billing drift bug; premium login/signup redesign
 
 **Explored, then declined, a third-party AI gateway.** Founder had $78 in
