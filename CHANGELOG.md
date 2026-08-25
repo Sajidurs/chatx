@@ -3,6 +3,55 @@
 All notable work, decisions, and open items are logged here, in order. This is
 the source of truth for project history alongside `system_design.md`.
 
+## 2026-08-25 — Removed drag, fixed a real double-widget bug, scroll-to-latest on reopen, much shorter AI replies
+
+Founder's screenshot from a real WordPress/Elementor site showed the
+chat widget rendered **twice**, stacked on the same page. Root cause: the
+embed snippet had ended up pasted in more than one place on that site
+(a real, common mistake with embeddable widgets -- a theme's global
+header and a page builder's own "custom HTML" block both carrying the
+same script tag). `embed.js` now guards against running more than once
+per page load (`window.__chatxWidgetMounted`), regardless of how many
+times the script tag itself appears -- doesn't fix the underlying
+duplicate paste on that specific site (the founder still needs to remove
+the extra one), but makes the *app* robust to it happening again on any
+site, since it's a genuinely common way these snippets get embedded wrong.
+
+**Removed the drag/"move" feature entirely, per founder's request** ("for
+now") -- pulled all of it back out of `embed-widget.tsx` and `embed.js`
+rather than leaving a half-used feature in place.
+
+**Scroll-to-latest-message on reopen.** After a few back-and-forth
+messages, minimizing and reopening showed wherever the panel had last
+been scrolled instead of jumping to the newest message -- the
+scroll-to-bottom effect only depended on `messages`/`typing` changing,
+and neither changes when just toggling `open`. Added `open` to that
+effect's dependencies.
+
+**AI replies are now much shorter.** Confirmed from the founder's own
+screenshot: asked "how many services do you have," the assistant dumped
+the entire 9-item menu with every price instead of just answering the
+question. Added a new, deliberately global system-prompt context
+(`concisenessContext` in `respond.ts`) instructing 1-3 sentence replies,
+answering the actual question first, and never dumping a full list
+unless it was specifically asked for -- applies to every business
+regardless of what they've written in their own persona/tone fields,
+rather than something each one has to remember to configure. Re-tested
+the exact "how many services" question afterward: now answers with the
+count and offers to list them, instead of listing everything unprompted.
+
+**Verified:** re-ran the exact "how many services do you have?" question
+against Aim Haircut's real trained menu and confirmed the new reply is
+short instead of the full dump from the screenshot. Confirmed the drag
+handle and its cursor styling are fully gone from the rendered widget.
+Local dev testing for the scroll-on-reopen fix hit the same Turbopack
+cold-compile flakiness documented earlier this session (a message send
+that should take a few seconds intermittently timed out waiting 40s+
+locally) -- deploying and re-verifying against production directly
+instead, which has been the more reliable environment for this class of
+timing-sensitive check all session. `npx tsc --noEmit` and `npm run build`
+both clean.
+
 ## 2026-08-25 — Five real bugs found testing the widget live: drag jump, lost lead info, wrong booking time, oversized bubbles, late typing indicator
 
 Founder tested everything from earlier today live and reported five
